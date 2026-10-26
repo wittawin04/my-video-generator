@@ -95,16 +95,24 @@ def clean_text_for_tts(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "มาดูคลิปนี้กันครับ"
 
-# 1. ฟังก์ชันสร้างเสียงด้วย Botnoi Voice API
+# 1. ฟังก์ชันสร้างเสียงด้วย Botnoi Voice API (มีระบบลองหลาย Endpoint)
 def generate_voice_botnoi(text, voice_choice, output_file="voice.mp3"):
     if not botnoi_token:
         raise Exception("ไม่พบ BOTNOI_TOKEN ใน Streamlit Secrets กรุณาตั้งค่าโทเคนบอทน้อยก่อนใช้งานครับ")
 
     clean_text = clean_text_for_tts(text)
-    # กำหนด Speaker ID (1 = เสียงผู้หญิง, 2 = เสียงผู้ชาย)
     speaker_id = "1" if "ผู้หญิง" in voice_choice else "2"
 
-    url = "https://api-v2.botnoi.ai/api/service/generate_audio"
+    # ลิสต์ URL API ของบอทน้อยแบบสำรอง
+    endpoints = [
+        "https://api.botnoi.ai/ran_voice/v1/generate_audio",
+        "https://api-v2.botnoi.ai/api/service/generate_audio"
+    ]
+    
+    headers = {
+        "Botnoi-Token": botnoi_token,
+        "Content-Type": "application/json"
+    }
     payload = {
         "text": clean_text,
         "speaker": speaker_id,
@@ -112,28 +120,31 @@ def generate_voice_botnoi(text, voice_choice, output_file="voice.mp3"):
         "speed": "1.1",
         "type_media": "mp3"
     }
-    headers = {
-        "Botnoi-Token": botnoi_token,
-        "Content-Type": "application/json"
-    }
-    
-    res = requests.post(url, json=payload, headers=headers, timeout=30)
-    if res.status_code == 200:
-        res_json = res.json()
-        audio_url = res_json.get("audio_url")
-        if audio_url:
-            audio_bytes = requests.get(audio_url).content
-            with open(output_file, "wb") as f:
-                f.write(audio_bytes)
-            return
-        raise Exception(f"Botnoi API ไม่ได้ส่ง URL เสียงกลับมา: {res_json}")
-    else:
-        raise Exception(f"เกิดข้อผิดพลาดจาก Botnoi API (Status Code: {res.status_code}): {res.text}")
+
+    last_err = None
+    for url in endpoints:
+        try:
+            res = requests.post(url, json=payload, headers=headers, timeout=15)
+            if res.status_code == 200:
+                res_json = res.json()
+                audio_url = res_json.get("audio_url")
+                if audio_url:
+                    audio_bytes = requests.get(audio_url, timeout=15).content
+                    with open(output_file, "wb") as f:
+                        f.write(audio_bytes)
+                    return
+        except Exception as err:
+            last_err = err
+            continue
+
+    # ถ้าต่อ Botnoi ไม่ได้เลย ให้สลับไปใช้ Edge-TTS ฟรีทันที
+    st.warning("⚠️ ไม่สามารถเชื่อมต่อ Botnoi API ได้ ชั่วคราว ระบบกำลังสลับไปใช้ Edge-TTS พากย์แทนให้อัตโนมัติ...")
+    generate_voice_edge(text, voice_choice, output_file)
 
 # 2. ฟังก์ชันสร้างเสียงด้วย Edge-TTS (ฟรี 100%)
 def generate_voice_edge(text, voice_choice, output_file="voice.mp3"):
     clean_text = clean_text_for_tts(text)
-    voice_code = "th-TH-PremwadeeNeural" if "Premwadee" in voice_choice else "th-TH-NiwatNeural"
+    voice_code = "th-TH-PremwadeeNeural" if "ผู้หญิง" in voice_choice or "Premwadee" in voice_choice else "th-TH-NiwatNeural"
 
     async def run_tts():
         communicate = edge_tts.Communicate(clean_text, voice_code, rate="+10%", pitch="+0Hz")
@@ -273,30 +284,4 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 else:
                     sc_video = sc_video.subclip(0, sc_audio.duration)
 
-                sc_video = sc_video.set_audio(sc_audio)
-                scene_clips.append(sc_video)
-
-            if not scene_clips:
-                raise Exception("ไม่สามารถตัดแบ่งฉากวิดีโอได้ กรุณาลองใหม่อีกครั้ง")
-
-            final_clip = concatenate_videoclips(scene_clips)
-            
-            target_w, target_h = (1080, 1920) if "แนวตั้ง" in aspect_ratio else (1920, 1080)
-            final_clip = final_clip.resize(newsize=(target_w, target_h))
-
-            output_filename = "output_video.mp4"
-            final_clip.write_videofile(output_filename, codec='libx264', audio_codec='aac')
-
-            status.success("🎉 ทำคลิปเสร็จเรียบร้อยแล้ว!")
-            st.video(output_filename)
-            
-            with open(output_filename, "rb") as file:
-                st.download_button(
-                    label="⬇️ ดาวน์โหลดวิดีโอ (.mp4)",
-                    data=file,
-                    file_name="thai_narrated_story.mp4",
-                    mime="video/mp4"
-                )
-
-        except Exception as e:
-            st.error(f"เกิดข้อผิดพลาด: {str(e)}")
+                sc_
