@@ -56,17 +56,13 @@ def download_tiktok(url, output_path="input_video.mp4"):
 def clean_text_for_tts(text):
     if not text:
         return "นี่คือวิดีโอสรุปเนื้อหาหลักครับ"
-    # ลบสัญลักษณ์ Markdown และสัญลักษณ์พิเศษ
     text = re.sub(r'[\*\#\_\[\]\(\)\{\}\<\>]', '', text)
-    # กรองเอาเฉพาะภาษาไทย ภาษาอังกฤษ ตัวเลข และเครื่องหมายวรรคตอนพื้นฐาน
     text = re.sub(r'[^\w\s\d\.\,\!\?\u0E00-\u0E7F]', ' ', text)
-    # ลบการเว้นวรรคซ้ำๆ และการขึ้นบรรทัดใหม่
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "นี่คือวิดีโอสรุปเนื้อหาหลักครับ"
 
 async def generate_tts(text, output_file="voice.mp3"):
     clean_text = clean_text_for_tts(text)
-    # ลิสต์เสียงพากย์ไทย (เสียงหลัก นิวัฒน์ / เสียงสำรอง เปรมวดี)
     voices = ["th-TH-NiwatNeural", "th-TH-PremwadeeNeural"]
     
     for voice in voices:
@@ -101,7 +97,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 status.info("📥 กำลังดาวน์โหลดวิดีโอ TikTok...")
                 download_tiktok(video_url, video_file)
             
-            # 2. ถอดความและคิดสคริปต์ด้วย Gemini 3.8 Flash
+            # 2. ถอดความและคิดสคริปต์ด้วย Gemini (พร้อมระบบ Fallback สลับโมเดลอัตโนมัติ)
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
             client = genai.Client(api_key=api_key)
             g_file = client.files.upload(file=video_file)
@@ -111,26 +107,39 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             ตอบกลับเป็นข้อความเพรียวๆ สำหรับนำไปอ่านเป็นเสียงพากย์ ไม่ต้องมีสัญลักษณ์พิเศษ หรือวงเล็บใดๆ
             """
             
+            # รายชื่อโมเดลที่ต้องการสลับใช้งานกรณีโมเดลหลักโควตาเต็ม (429)
+            candidate_models = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
             response = None
-            max_retries = 3
-            for attempt in range(max_retries):
+            last_error = None
+            
+            for model_name in candidate_models:
                 try:
                     response = client.models.generate_content(
-                        model='gemini-3.8-flash',
+                        model=model_name,
                         contents=[g_file, prompt]
                     )
-                    break
+                    if response and getattr(response, 'text', None):
+                        break
                 except Exception as api_err:
-                    if ("503" in str(api_err) or "UNAVAILABLE" in str(api_err)) and attempt < max_retries - 1:
-                        status.warning(f"⏳ เซิร์ฟเวอร์ผู้ใช้แน่น กำลังลองใหม่อัตโนมัติครั้งที่ {attempt + 1}/{max_retries}...")
-                        time.sleep(5)
+                    last_error = api_err
+                    err_msg = str(api_err)
+                    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                        status.warning(f"⏳ โมเดล {model_name} โควตาเต็ม กำลังสลับไปใช้โมเดลสำรอง...")
+                        time.sleep(2)
+                        continue
+                    elif "503" in err_msg or "UNAVAILABLE" in err_msg:
+                        time.sleep(3)
+                        continue
                     else:
-                        raise api_err
+                        continue
 
-            script_text = ""
-            if response and getattr(response, 'text', None):
-                script_text = response.text.strip()
+            if not response or not getattr(response, 'text', None):
+                if "429" in str(last_error) or "RESOURCE_EXHAUSTED" in str(last_error):
+                    raise Exception("โควตาฟรีประจำวันของ Gemini API Key นี้หมดแล้ว กรุณาเปลี่ยน API Key ใหม่ใน Streamlit Secrets ครับ")
+                else:
+                    raise Exception(f"ไม่สามารถเชื่อมต่อ Gemini API ได้: {str(last_error)}")
 
+            script_text = response.text.strip()
             st.subheader("📝 สคริปต์ที่ Gemini คิดให้:")
             st.write(script_text)
 
