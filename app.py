@@ -3,9 +3,9 @@ import time
 import asyncio
 import PIL.Image
 
-# ป้องกันปัญหา Pillow v10+ ไม่มีคำว่า ANTIALIAS
+# แก้ปัญหา Pillow v10+ ยกเลิกคำว่า ANTIALIAS ให้ทำงานร่วมกับ MoviePy ได้
 if not hasattr(PIL.Image, 'ANTIALIAS'):
-    PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
+    PIL.Image.ANTIALIAS = getattr(PIL.Image, 'LANCZOS', PIL.Image.BICUBIC)
 
 import streamlit as st
 from google import genai
