@@ -3,6 +3,7 @@ import re
 import time
 import json
 import asyncio
+import requests
 import numpy as np
 import PIL.Image
 
@@ -18,11 +19,12 @@ from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
 st.title("🎬 เครื่องมือสร้างคลิปเล่าเรื่องตัดฉากอัตโนมัติ")
-st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ เสียงพากย์ไทยเนียนกริบ ฟรี 100% ไม่ต้องผูกบัตร!")
+st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ พร้อมตัวเลือกเสียงพากย์ภาษาไทยคุณภาพสูง!")
 
-# ดึง API Key ของ Gemini จาก Streamlit Secrets (ใช้อันเดียวจบ)
+# ดึง API Keys จาก Streamlit Secrets
 raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
 api_key = str(raw_api_key).strip().strip('"').strip("'")
+botnoi_token = st.secrets.get("BOTNOI_TOKEN", "").strip().strip('"').strip("'")
 
 # ตัวเลือกนำเข้าวิดีโอ
 option = st.radio("เลือกวิธีนำเข้าวิดีโอ:", ["อัปโหลดไฟล์วิดีโอ (.mp4)", "วางลิงก์ TikTok"])
@@ -38,12 +40,14 @@ else:
 aspect_ratio = st.selectbox("เลือกขนาดวิดีโอ:", ["แนวตั้ง (9:16)", "แนวนอน (16:9)"])
 duration_option = st.selectbox("เลือกความยาวสคริปต์และคลิป:", ["30 วินาที", "1 นาที", "2 นาที", "3 นาที", "5 นาที"])
 
-# ตัวเลือกเสียงพากย์ภาษาไทย Neural (เสียงเดียวกับ Microsoft Azure)
+# แยกหมวดหมู่โมเดลเสียงพากย์ภาษาไทยอย่างชัดเจน
 voice_selection = st.selectbox(
-    "เลือกเสียงพากย์ภาษาไทย (Microsoft Neural):", 
+    "เลือกเอนจินและเสียงพากย์ภาษาไทย:", 
     [
-        "th-TH-PremwadeeNeural (เสียงผู้หญิง - สดใส เล่าสนุกเป็นธรรมชาติ)",
-        "th-TH-NiwatNeural (เสียงผู้ชาย - หนักแน่น สายสปอยล์หนัง)"
+        "🤖 Botnoi Voice: ผู้หญิงสายเล่าเรื่อง (ต้องใช้ BOTNOI_TOKEN)",
+        "🤖 Botnoi Voice: ผู้ชายสายสปอยล์ (ต้องใช้ BOTNOI_TOKEN)",
+        "⚡ Edge-TTS: Premwadee - ผู้หญิงสายเล่าเรื่อง (ฟรี 100% ไม่ต้องใช้ Key)",
+        "⚡ Edge-TTS: Niwat - ผู้ชายสายสปอยล์ (ฟรี 100% ไม่ต้องใช้ Key)"
     ]
 )
 
@@ -59,7 +63,7 @@ def download_tiktok(url, output_path="input_video.mp4"):
         ydl.download([url])
     return output_path
 
-# ฟังก์ชันทำความสะอาดข้อความ แปลงตัวเลขและลบอังกฤษเพื่อให้พากย์ไทยเป๊ะ
+# ฟังก์ชันทำความสะอาดข้อความ ลบอักษรอังกฤษและแปลงตัวเลขเป็นภาษาไทย
 def clean_text_for_tts(text):
     if not text:
         return "มาดูคลิปนี้กันครับ"
@@ -91,7 +95,42 @@ def clean_text_for_tts(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "มาดูคลิปนี้กันครับ"
 
-# ฟังก์ชันสร้างเสียงพากย์ด้วย Edge-TTS (ฟรี 100% ไม่ต้องใช้ API Key)
+# 1. ฟังก์ชันสร้างเสียงด้วย Botnoi Voice API
+def generate_voice_botnoi(text, voice_choice, output_file="voice.mp3"):
+    if not botnoi_token:
+        raise Exception("ไม่พบ BOTNOI_TOKEN ใน Streamlit Secrets กรุณาตั้งค่าโทเคนบอทน้อยก่อนใช้งานครับ")
+
+    clean_text = clean_text_for_tts(text)
+    # กำหนด Speaker ID (1 = เสียงผู้หญิง, 2 = เสียงผู้ชาย)
+    speaker_id = "1" if "ผู้หญิง" in voice_choice else "2"
+
+    url = "https://api-v2.botnoi.ai/api/service/generate_audio"
+    payload = {
+        "text": clean_text,
+        "speaker": speaker_id,
+        "volume": "1",
+        "speed": "1.1",
+        "type_media": "mp3"
+    }
+    headers = {
+        "Botnoi-Token": botnoi_token,
+        "Content-Type": "application/json"
+    }
+    
+    res = requests.post(url, json=payload, headers=headers, timeout=30)
+    if res.status_code == 200:
+        res_json = res.json()
+        audio_url = res_json.get("audio_url")
+        if audio_url:
+            audio_bytes = requests.get(audio_url).content
+            with open(output_file, "wb") as f:
+                f.write(audio_bytes)
+            return
+        raise Exception(f"Botnoi API ไม่ได้ส่ง URL เสียงกลับมา: {res_json}")
+    else:
+        raise Exception(f"เกิดข้อผิดพลาดจาก Botnoi API (Status Code: {res.status_code}): {res.text}")
+
+# 2. ฟังก์ชันสร้างเสียงด้วย Edge-TTS (ฟรี 100%)
 def generate_voice_edge(text, voice_choice, output_file="voice.mp3"):
     clean_text = clean_text_for_tts(text)
     voice_code = "th-TH-PremwadeeNeural" if "Premwadee" in voice_choice else "th-TH-NiwatNeural"
@@ -102,9 +141,18 @@ def generate_voice_edge(text, voice_choice, output_file="voice.mp3"):
 
     asyncio.run(run_tts())
 
+# ฟังก์ชันศูนย์รวมเลือกสลับเอนจินเสียงตามที่ผู้ใช้เลือกใน Dropdown
+def generate_voice(text, voice_choice, output_file="voice.mp3"):
+    if "Botnoi" in voice_choice:
+        generate_voice_botnoi(text, voice_choice, output_file)
+    else:
+        generate_voice_edge(text, voice_choice, output_file)
+
 if st.button("🚀 เริ่มสร้างวิดีโอ"):
     if not api_key:
         st.error("ไม่พบ GEMINI_API_KEY ในระบบ Secrets กรุณาตั้งค่าใน Streamlit Cloud ก่อนครับ")
+    elif "Botnoi" in voice_selection and not botnoi_token:
+        st.error("คุณเลือกเสียง Botnoi แต่ยังไม่ได้ใส่ BOTNOI_TOKEN ใน Streamlit Secrets กรุณาใส่ Token หรือสลับไปใช้ Edge-TTS แบบฟรีแทนครับ")
     elif option == "วางลิงก์ TikTok" and not video_url:
         st.warning("กรุณาใส่ลิงก์วิดีโอก่อนครับ")
     elif option == "อัปโหลดไฟล์วิดีโอ (.mp4)" and not uploaded_file:
@@ -197,8 +245,8 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 full_script_display += f"**ฉากที่ {i} [{sc.get('start_sec', 0)}s - {sc.get('end_sec', 0)}s]:** {sc.get('text', '')}\n\n"
             st.markdown(full_script_display)
 
-            # 3. เจนเสียงพากย์ Edge-TTS ภาษาไทย และตัดคลิปตาม Timestamp
-            status.info("🎙️ กำลังลงเสียงพากย์ภาษาไทยด้วย Edge-TTS และรวมฉาก...")
+            # 3. เจนเสียงพากย์ภาษาไทย และตัดคลิปตาม Timestamp
+            status.info("🎙️ กำลังลงเสียงพากย์ตามเอนจินที่เลือกและรวมฉาก...")
             main_clip = VideoFileClip(video_file)
             scene_clips = []
 
@@ -214,7 +262,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 end_t = max(start_t + 0.5, min(end_t, main_clip.duration))
 
                 audio_file = f"voice_scene_{idx}.mp3"
-                generate_voice_edge(text, voice_selection, audio_file)
+                generate_voice(text, voice_selection, audio_file)
                 sc_audio = AudioFileClip(audio_file)
 
                 sc_video = main_clip.subclip(start_t, end_t)
