@@ -63,7 +63,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 status.info("📥 กำลังดาวน์โหลดวิดีโอ TikTok...")
                 download_tiktok(video_url, video_file)
             
-            # 2. ถอดความและคิดสคริปต์ด้วย Gemini
+            # 2. ถอดความและคิดสคริปต์ด้วย Gemini 2.0 Flash
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
             client = genai.Client(api_key=api_key)
             g_file = client.files.upload(file=video_file)
@@ -73,7 +73,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             ตอบกลับเป็นข้อความเพรียวๆ สำหรับนำไปอ่านเป็นเสียงพากย์ ไม่ต้องมีสัญลักษณ์พิเศษ
             """
             response = client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.0-flash',
                 contents=[g_file, prompt]
             )
             script_text = response.text.strip()
