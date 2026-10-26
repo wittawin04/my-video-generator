@@ -13,7 +13,7 @@ st.write("สร้างคลิปสรุปเนื้อหา พร้
 # ดึง API Key จาก Streamlit Secrets
 api_key = st.secrets.get("GEMINI_API_KEY", "")
 
-# ตัวเลือกรอบรับการใช้งาน
+# ตัวเลือกรองรับการใช้งาน
 option = st.radio("เลือกวิธีนำเข้าวิดีโอ:", ["อัปโหลดไฟล์วิดีโอ (.mp4)", "วางลิงก์ TikTok"])
 
 uploaded_file = None
@@ -63,7 +63,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 status.info("📥 กำลังดาวน์โหลดวิดีโอ TikTok...")
                 download_tiktok(video_url, video_file)
             
-            # 2. ถอดความและคิดสคริปต์ด้วย Gemini 2.0 Flash
+            # 2. ถอดความและคิดสคริปต์ด้วย Gemini 3.8 Flash
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
             client = genai.Client(api_key=api_key)
             g_file = client.files.upload(file=video_file)
@@ -73,7 +73,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             ตอบกลับเป็นข้อความเพรียวๆ สำหรับนำไปอ่านเป็นเสียงพากย์ ไม่ต้องมีสัญลักษณ์พิเศษ
             """
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-3.8-flash',
                 contents=[g_file, prompt]
             )
             script_text = response.text.strip()
