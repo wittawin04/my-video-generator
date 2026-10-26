@@ -1,6 +1,12 @@
 import os
 import time
 import asyncio
+import PIL.Image
+
+# ป้องกันปัญหา Pillow v10+ ไม่มีคำว่า ANTIALIAS
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
+
 import streamlit as st
 from google import genai
 import edge_tts
@@ -103,7 +109,6 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             clip = VideoFileClip(video_file)
             audio = AudioFileClip("voice.mp3")
             
-            # ตัดวิดีโอให้ยาวเท่าเสียงพากย์
             min_duration = min(clip.duration, audio.duration)
             final_clip = clip.subclip(0, min_duration)
             final_clip = final_clip.set_audio(audio)
