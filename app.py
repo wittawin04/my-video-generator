@@ -4,7 +4,7 @@ import streamlit as st
 from google import genai
 import yt_dlp
 import edge_tts
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
+from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
 st.title("🎬 เครื่องมือสร้างคลิปอธิบายอัตโนมัติ")
