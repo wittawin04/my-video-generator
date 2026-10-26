@@ -1,6 +1,7 @@
 streamlit
 google-genai
 edge-tts
+gTTS
 moviepy==1.0.3
 pillow
 yt-dlp
