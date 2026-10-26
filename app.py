@@ -8,11 +8,20 @@ from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
 st.title("🎬 เครื่องมือสร้างคลิปอธิบายอัตโนมัติ")
-st.write("วางลิงก์วิดีโอ สรุปเนื้อหา และสร้างคลิปพร้อมคำบรรยายได้ทันที!")
 
-# แถบด้านข้างสำหรับใส่ API Key
 api_key = st.sidebar.text_input("ใส่ Gemini API Key:", type="password")
-video_url = st.text_input("วางลิงก์วิดีโอ (TikTok, YouTube Shorts ฯลฯ):")
+
+# ให้เลือกได้ทั้งอัปโหลดไฟล์ หรือวางลิงก์
+option = st.radio("เลือกวิธีนำเข้าวิดีโอ:", ["อัปโหลดไฟล์วิดีโอ (.mp4)", "วางลิงก์วิดีโอ"])
+
+uploaded_video = None
+video_url = ""
+
+if option == "อัปโหลดไฟล์วิดีโอ (.mp4)":
+    uploaded_video = st.file_uploader("เลือกไฟล์วิดีโอจากเครื่อง:", type=["mp4", "mov"])
+else:
+    video_url = st.text_input("วางลิงก์วิดีโอ (TikTok, YouTube):")
+
 aspect_ratio = st.selectbox("เลือกขนาดวิดีโอ:", ["แนวตั้ง (9:16)", "แนวนอน (16:9)"])
 
 def download_video(url):
@@ -32,20 +41,28 @@ async def generate_tts(text, output_file="voice.mp3"):
 if st.button("🚀 เริ่มสร้างวิดีโอ"):
     if not api_key:
         st.error("กรุณาใส่ Gemini API Key ที่แถบด้านซ้ายก่อนครับ")
-    elif not video_url:
+    elif option == "วางลิงก์วิดีโอ" and not video_url:
         st.warning("กรุณาใส่ลิงก์วิดีโอก่อนครับ")
+    elif option == "อัปโหลดไฟล์วิดีโอ (.mp4)" and not uploaded_video:
+        st.warning("กรุณาอัปโหลดไฟล์วิดีโอก่อนครับ")
     else:
         try:
             status = st.empty()
-            
-            # 1. โหลดคลิป
-            status.info("📥 กำลังดาวน์โหลดวิดีโอต้นทาง...")
-            video_file = download_video(video_url)
+            video_file = "input_video.mp4"
+
+            # 1. จัดเตรียมไฟล์วิดีโอ
+            if option == "อัปโหลดไฟล์วิดีโอ (.mp4)":
+                status.info("📥 กำลังเตรียมไฟล์วิดีโอ...")
+                with open(video_file, "wb") as f:
+                    f.write(uploaded_video.read())
+            else:
+                status.info("📥 กำลังดาวน์โหลดวิดีโอต้นทาง...")
+                download_video(video_url)
             
             # 2. ถอดความและคิดสคริปต์ด้วย Gemini
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
             client = genai.Client(api_key=api_key)
-            uploaded_file = client.files.upload(file=video_file)
+            g_file = client.files.upload(file=video_file)
             
             prompt = """
             ช่วยวิเคราะห์วิดีโอนี้ และสร้างสคริปต์สรุปสั้นๆ ภาษาไทยสำหรับนำไปทำคลิปอธิบายความยาวไม่เกิน 30 วินาที
@@ -53,7 +70,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
-                contents=[uploaded_file, prompt]
+                contents=[g_file, prompt]
             )
             script_text = response.text.strip()
             st.subheader("📝 สคริปต์ที่ Gemini คิดให้:")
