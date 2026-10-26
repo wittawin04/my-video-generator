@@ -73,7 +73,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             ตอบกลับเป็นข้อความเพรียวๆ สำหรับนำไปอ่านเป็นเสียงพากย์ ไม่ต้องมีสัญลักษณ์พิเศษ
             """
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-1.5-flash',
                 contents=[g_file, prompt]
             )
             script_text = response.text.strip()
