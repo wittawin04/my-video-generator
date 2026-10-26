@@ -2,11 +2,9 @@ import os
 import re
 import time
 import json
-import asyncio
 import requests
 import numpy as np
 import PIL.Image
-from gtts import gTTS
 
 # ปลั๊กอินแก้ปัญหา Pillow v10+ ยกเลิกคำว่า ANTIALIAS สำหรับ MoviePy 1.0.3
 if not hasattr(PIL.Image, 'ANTIALIAS'):
@@ -14,13 +12,12 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
 
 import streamlit as st
 from google import genai
-import edge_tts
 import yt_dlp
 from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
-st.title("🎬 เครื่องมือสร้างคลิปเล่าเรื่องตัดฉากอัตโนมัติ")
-st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ พร้อมตัวเลือกเสียงพากย์ครบทุกสไตล์!")
+st.title("🎬 เครื่องมือสร้างคลิปเล่าเรื่องตัดฉากอัตโนมัติ (ElevenLabs Only)")
+st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ พากย์เสียงเนียนระดับมนุษย์ด้วย ElevenLabs!")
 
 # ดึง API Key จาก Streamlit Secrets
 raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -41,16 +38,13 @@ else:
 aspect_ratio = st.selectbox("เลือกขนาดวิดีโอ:", ["แนวตั้ง (9:16)", "แนวนอน (16:9)"])
 duration_option = st.selectbox("เลือกความยาวสคริปต์และคลิป:", ["30 วินาที", "1 นาที", "2 นาที", "3 นาที", "5 นาที"])
 
-# ศูนย์รวมตัวเลือกโมเดลเสียงพากย์ทุกรูปแบบ
+# ตัวเลือกเสียง ElevenLabs เท่านั้น
 voice_selection = st.selectbox(
-    "เลือกโมเดลเสียงพากย์ (Voice Engine):", 
+    "เลือกเสียงพากย์ ElevenLabs:", 
     [
-        "🌟 ElevenLabs: Adam (เสียงชาย - มนุษย์จริง เนียนใส่อารมณ์)",
-        "🌟 ElevenLabs: Rachel (เสียงหญิง - มนุษย์จริง สดใสมีพลัง)",
-        "🌟 ElevenLabs: Charlie (เสียงชาย - มนุษย์จริง สายสปอยล์)",
-        "⚡ Edge-TTS: ผู้หญิงสายเล่าเรื่อง (Premwadee - สปีดเร่ง +12% สนุกกระชับ ฟรี)",
-        "⚡ Edge-TTS: ผู้ชายสายสปอยล์ (Niwat - สปีดเร่ง +12% เสียงหนักแน่น ฟรี)",
-        "🔊 Google Voice: (gTTS - ภาษาไทยมาตรฐาน อ่านชัด ฟรี 100%)"
+        "Adam (เสียงชาย - นุ่มลึก มีเสน่ห์ เล่าเรื่องปั่นๆ)",
+        "Rachel (เสียงหญิง - สดใส มีพลัง เล่าสนุก)",
+        "Charlie (เสียงชาย - กระฉับกระเฉง สายสปอยล์คลิป)"
     ]
 )
 
@@ -91,58 +85,47 @@ def clean_text_for_tts(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "มาดูคลิปนี้กันครับ"
 
-# ฟังก์ชันสร้างเสียงพากย์ระบบยิง Direct REST API (เสถียร 100%)
-def generate_voice_audio(text, choice, output_file="voice.mp3"):
+# ฟังก์ชันสร้างเสียงพากย์ด้วย ElevenLabs API โดยตรง
+def generate_voice_elevenlabs(text, choice, output_file="voice.mp3"):
+    if not eleven_api_key:
+        raise Exception("ไม่พบ ELEVENLABS_API_KEY ใน Streamlit Secrets กรุณาใส่ API Key ใน Secrets ก่อนใช้งานครับ")
+
     clean_text = clean_text_for_tts(text)
 
-    # 1. กลุ่มเสียง ElevenLabs (ยิงตรงผ่าน REST API)
-    if "ElevenLabs" in choice and eleven_api_key:
-        voice_id = "pNInz6obpgDQGcFmaJgB" # Adam Default
-        if "Rachel" in choice:
-            voice_id = "21m00Tcm4TlvDq8ikWAM"
-        elif "Charlie" in choice:
-            voice_id = "IKne3meq5aSn9XLyUdCD"
+    # Voice ID มาตรฐานของ ElevenLabs
+    voice_id = "pNInz6obpgDQGcFmaJgB" # Adam Default
+    if "Rachel" in choice:
+        voice_id = "21m00Tcm4TlvDq8ikWAM"
+    elif "Charlie" in choice:
+        voice_id = "IKne3meq5aSn9XLyUdCD"
 
-        try:
-            url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-            headers = {
-                "Accept": "audio/mpeg",
-                "Content-Type": "application/json",
-                "xi-api-key": eleven_api_key
-            }
-            payload = {
-                "text": clean_text,
-                "model_id": "eleven_multilingual_v2",
-                "voice_settings": {
-                    "stability": 0.5,
-                    "similarity_boost": 0.75
-                }
-            }
-            
-            res = requests.post(url, json=payload, headers=headers, timeout=30)
-            if res.status_code == 200 and len(res.content) > 500:
-                with open(output_file, "wb") as f:
-                    f.write(res.content)
-                return
-        except Exception:
-            pass # หาก ElevenLabs มีข้อผิดพลาด ให้สลับไปใช้ Edge-TTS สำรองทันที
-
-    # 2. กลุ่มเสียง Edge-TTS (สปีดเร่งกระชับ +12%)
-    if "Edge-TTS" in choice or "ElevenLabs" in choice:
-        voice_code = "th-TH-PremwadeeNeural" if "Rachel" in choice or "Premwadee" in choice else "th-TH-NiwatNeural"
-        async def run_edge():
-            communicate = edge_tts.Communicate(clean_text, voice_code, rate="+12%", pitch="+2Hz")
-            await communicate.save(output_file)
-        asyncio.run(run_edge())
-
-    # 3. กลุ่มเสียง gTTS (Google Voice ฟรี)
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    headers = {
+        "Accept": "audio/mpeg",
+        "Content-Type": "application/json",
+        "xi-api-key": eleven_api_key
+    }
+    payload = {
+        "text": clean_text,
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {
+            "stability": 0.5,
+            "similarity_boost": 0.75
+        }
+    }
+    
+    res = requests.post(url, json=payload, headers=headers, timeout=30)
+    if res.status_code == 200 and len(res.content) > 500:
+        with open(output_file, "wb") as f:
+            f.write(res.content)
     else:
-        tts = gTTS(text=clean_text, lang='th', slow=False)
-        tts.save(output_file)
+        raise Exception(f"เกิดข้อผิดพลาดจาก ElevenLabs API (Status Code: {res.status_code}): {res.text}")
 
 if st.button("🚀 เริ่มสร้างวิดีโอ"):
     if not api_key:
         st.error("ไม่พบ GEMINI_API_KEY ในระบบ Secrets กรุณาตั้งค่าใน Streamlit Cloud ก่อนครับ")
+    elif not eleven_api_key:
+        st.error("ไม่พบ ELEVENLABS_API_KEY ในระบบ Secrets กรุณาตั้งค่าก่อนใช้งานครับ")
     elif option == "วางลิงก์ TikTok" and not video_url:
         st.warning("กรุณาใส่ลิงก์วิดีโอก่อนครับ")
     elif option == "อัปโหลดไฟล์วิดีโอ (.mp4)" and not uploaded_file:
@@ -187,108 +170,4 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
 
             กฎเหล็กการแต่งบทพากย์ ("text"):
             1. ใช้น้ำเสียงแบบเพื่อนเล่าเรื่องให้เพื่อนฟัง มีคำอุทานสร้างอารมณ์ เช่น "เฮ้ย!", "ว้าว!", "ดูสิ!", "จังหวะนี้คือ!"
-            2. เขียนชื่อตัวละครเป็นคำอ่านไทยตรงตัว เช่น Mr. Krabs -> มิสเตอร์แครปส์, SpongeBob -> สปอนจ์บอบ
-            3. สคริปต์ต้องตรงกับภาพที่เกิดขึ้นในช่วง start_sec ถึง end_sec นั้นๆ
-            4. ห้ามมีอักขระพิเศษ (*, #) หรือสัญลักษณ์แปลกๆ
-            """
-            
-            max_retries = 3
-            response = None
-            last_error = None
-            
-            for attempt in range(max_retries):
-                try:
-                    response = client.models.generate_content(
-                        model='gemini-3.8-flash',
-                        contents=[g_file, prompt]
-                    )
-                    if response and getattr(response, 'text', None):
-                        break
-                except Exception as api_err:
-                    last_error = api_err
-                    err_msg = str(api_err)
-                    if "503" in err_msg or "UNAVAILABLE" in err_msg:
-                        wait_time = (attempt + 1) * 3
-                        status.warning(f"⏳ เซิร์ฟเวอร์ยุ่ง กำลังลองใหม่อัตโนมัติใน {wait_time} วินาที...")
-                        time.sleep(wait_time)
-                        continue
-                    elif "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                        raise Exception("โควตาฟรีประจำวันของ Gemini API Key นี้หมดแล้ว กรุณาเปลี่ยน API Key ใหม่ใน Streamlit Secrets ครับ")
-                    else:
-                        if attempt == max_retries - 1:
-                            raise api_err
-                        time.sleep(2)
-
-            if not response or not getattr(response, 'text', None):
-                raise Exception(f"ไม่สามารถเชื่อมต่อ Gemini API ได้: {str(last_error)}")
-
-            raw_response_text = response.text.strip()
-            clean_json_str = re.sub(r'```json\s*|\s*```', '', raw_response_text).strip()
-            
-            scenes = []
-            try:
-                scenes = json.loads(clean_json_str)
-            except Exception:
-                scenes = [{"start_sec": 0, "end_sec": 30, "text": raw_response_text}]
-
-            st.subheader("📝 สคริปต์เล่าเรื่องแบบใส่อารมณ์:")
-            full_script_display = ""
-            for i, sc in enumerate(scenes, 1):
-                full_script_display += f"**ฉากที่ {i} [{sc.get('start_sec', 0)}s - {sc.get('end_sec', 0)}s]:** {sc.get('text', '')}\n\n"
-            st.markdown(full_script_display)
-
-            # 3. เจนเสียงพากย์และตัดคลิปตาม Timestamp
-            status.info("🎙️ กำลังลงเสียงพากย์ตามโมเดลที่เลือกและรวมฉาก...")
-            main_clip = VideoFileClip(video_file)
-            scene_clips = []
-
-            for idx, sc in enumerate(scenes):
-                text = sc.get('text', '')
-                if not text.strip():
-                    continue
-
-                start_t = float(sc.get('start_sec', 0))
-                end_t = float(sc.get('end_sec', start_t + 5))
-
-                start_t = max(0.0, min(start_t, main_clip.duration - 0.5))
-                end_t = max(start_t + 0.5, min(end_t, main_clip.duration))
-
-                audio_file = f"voice_scene_{idx}.mp3"
-                generate_voice_audio(text, voice_selection, audio_file)
-                sc_audio = AudioFileClip(audio_file)
-
-                sc_video = main_clip.subclip(start_t, end_t)
-
-                if sc_video.duration < sc_audio.duration:
-                    n_repeats = int(np.ceil(sc_audio.duration / sc_video.duration))
-                    sc_video = concatenate_videoclips([sc_video] * n_repeats).subclip(0, sc_audio.duration)
-                else:
-                    sc_video = sc_video.subclip(0, sc_audio.duration)
-
-                sc_video = sc_video.set_audio(sc_audio)
-                scene_clips.append(sc_video)
-
-            if not scene_clips:
-                raise Exception("ไม่สามารถตัดแบ่งฉากวิดีโอได้ กรุณาลองใหม่อีกครั้ง")
-
-            final_clip = concatenate_videoclips(scene_clips)
-            
-            target_w, target_h = (1080, 1920) if "แนวตั้ง" in aspect_ratio else (1920, 1080)
-            final_clip = final_clip.resize(newsize=(target_w, target_h))
-
-            output_filename = "output_video.mp4"
-            final_clip.write_videofile(output_filename, codec='libx264', audio_codec='aac')
-
-            status.success("🎉 ทำคลิปเสร็จเรียบร้อยแล้ว!")
-            st.video(output_filename)
-            
-            with open(output_filename, "rb") as file:
-                st.download_button(
-                    label="⬇️ ดาวน์โหลดวิดีโอ (.mp4)",
-                    data=file,
-                    file_name="narrated_story_video.mp4",
-                    mime="video/mp4"
-                )
-
-        except Exception as e:
-            st.error(f"เกิดข้อผิดพลาด: {str(e)}")
+            2. เขียนชื่อตัวละครเป็นคำอ่านไทยตรงตัว เช่น Mr. Krabs -> มิ
