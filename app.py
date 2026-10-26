@@ -5,7 +5,7 @@ import streamlit as st
 from google import genai
 import edge_tts
 import yt_dlp
-from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
+from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
 st.title("🎬 เครื่องมือสร้างคลิปอธิบายอัตโนมัติ")
@@ -64,7 +64,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 status.info("📥 กำลังดาวน์โหลดวิดีโอ TikTok...")
                 download_tiktok(video_url, video_file)
             
-            # 2. ถอดความและคิดสคริปต์ด้วย Gemini (พร้อมระบบลองใหม่อัตโนมัติกรณี 503)
+            # 2. ถอดความและคิดสคริปต์ด้วย Gemini 3.8 Flash
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
             client = genai.Client(api_key=api_key)
             g_file = client.files.upload(file=video_file)
@@ -74,7 +74,6 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             ตอบกลับเป็นข้อความเพรียวๆ สำหรับนำไปอ่านเป็นเสียงพากย์ ไม่ต้องมีสัญลักษณ์พิเศษ
             """
             
-            # วนลองใหม่สูงสุด 3 ครั้งหากเจอ 503 UNAVAILABLE
             response = None
             max_retries = 3
             for attempt in range(max_retries):
@@ -104,7 +103,9 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             clip = VideoFileClip(video_file)
             audio = AudioFileClip("voice.mp3")
             
-            final_clip = clip.subclip(0, min(clip.duration, audio.duration))
+            # ตัดวิดีโอให้ยาวเท่าเสียงพากย์
+            min_duration = min(clip.duration, audio.duration)
+            final_clip = clip.subclip(0, min_duration)
             final_clip = final_clip.set_audio(audio)
             
             target_w, target_h = (1080, 1920) if "แนวตั้ง" in aspect_ratio else (1920, 1080)
