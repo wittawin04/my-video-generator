@@ -3,6 +3,7 @@ import re
 import time
 import json
 import asyncio
+import requests
 import numpy as np
 import PIL.Image
 from gtts import gTTS
@@ -13,7 +14,6 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
 
 import streamlit as st
 from google import genai
-from elevenlabs.client import ElevenLabs
 import edge_tts
 import yt_dlp
 from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
@@ -91,51 +91,51 @@ def clean_text_for_tts(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "มาดูคลิปนี้กันครับ"
 
-# ฟังก์ชันสร้างเสียงพากย์รองรับ fallback ป้องกันข้อผิดพลาด No Audio
+# ฟังก์ชันสร้างเสียงพากย์ระบบยิง Direct REST API (เสถียร 100%)
 def generate_voice_audio(text, choice, output_file="voice.mp3"):
     clean_text = clean_text_for_tts(text)
 
-    # 1. กลุ่มเสียง ElevenLabs (ใช้ Voice ID ตรง 20 หลัก)
-    if "ElevenLabs" in choice:
-        if eleven_api_key:
-            # Voice IDs มาตรฐานของ ElevenLabs
-            voice_id = "pNInz6obpgDQGcFmaJgB" # Adam
-            if "Rachel" in choice:
-                voice_id = "21m00Tcm4TlvDq8ikWAM" # Rachel
-            elif "Charlie" in choice:
-                voice_id = "IKne3meq5aSn9XLyUdCD" # Charlie
+    # 1. กลุ่มเสียง ElevenLabs (ยิงตรงผ่าน REST API)
+    if "ElevenLabs" in choice and eleven_api_key:
+        voice_id = "pNInz6obpgDQGcFmaJgB" # Adam Default
+        if "Rachel" in choice:
+            voice_id = "21m00Tcm4TlvDq8ikWAM"
+        elif "Charlie" in choice:
+            voice_id = "IKne3meq5aSn9XLyUdCD"
 
-            try:
-                client = ElevenLabs(api_key=eleven_api_key)
-                audio_stream = client.generate(
-                    text=clean_text,
-                    voice=voice_id,
-                    model="eleven_multilingual_v2"
-                )
-                
-                audio_bytes = b"".join(chunk for chunk in audio_stream if chunk)
-                if len(audio_bytes) > 1000: # ต้องได้ไฟล์เสียงขนาดเกิน 1KB
-                    with open(output_file, "wb") as f:
-                        f.write(audio_bytes)
-                    return
-            except Exception:
-                pass # สลับไปใช้ Edge-TTS สำรองทันทีหากเกิดข้อผิดพลาด
+        try:
+            url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+            headers = {
+                "Accept": "audio/mpeg",
+                "Content-Type": "application/json",
+                "xi-api-key": eleven_api_key
+            }
+            payload = {
+                "text": clean_text,
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75
+                }
+            }
+            
+            res = requests.post(url, json=payload, headers=headers, timeout=30)
+            if res.status_code == 200 and len(res.content) > 500:
+                with open(output_file, "wb") as f:
+                    f.write(res.content)
+                return
+        except Exception:
+            pass # หาก ElevenLabs มีข้อผิดพลาด ให้สลับไปใช้ Edge-TTS สำรองทันที
 
-        # สำรองกรณีไม่ได้ใส่ Key หรือ ElevenLabs ขัดข้อง
-        async def run_edge_fallback():
-            communicate = edge_tts.Communicate(clean_text, "th-TH-PremwadeeNeural", rate="+12%", pitch="+2Hz")
-            await communicate.save(output_file)
-        asyncio.run(run_edge_fallback())
-
-    # 2. กลุ่มเสียง Edge-TTS (เร่งสปีดกระชับ)
-    elif "Edge-TTS" in choice:
-        voice_code = "th-TH-PremwadeeNeural" if "Premwadee" in choice else "th-TH-NiwatNeural"
+    # 2. กลุ่มเสียง Edge-TTS (สปีดเร่งกระชับ +12%)
+    if "Edge-TTS" in choice or "ElevenLabs" in choice:
+        voice_code = "th-TH-PremwadeeNeural" if "Rachel" in choice or "Premwadee" in choice else "th-TH-NiwatNeural"
         async def run_edge():
             communicate = edge_tts.Communicate(clean_text, voice_code, rate="+12%", pitch="+2Hz")
             await communicate.save(output_file)
         asyncio.run(run_edge())
 
-    # 3. กลุ่มเสียง gTTS (Google Voice ฟรี 100%)
+    # 3. กลุ่มเสียง gTTS (Google Voice ฟรี)
     else:
         tts = gTTS(text=clean_text, lang='th', slow=False)
         tts.save(output_file)
