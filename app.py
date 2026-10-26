@@ -17,7 +17,7 @@ from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
 st.title("🎬 เครื่องมือสร้างคลิปเล่าเรื่องตัดฉากอัตโนมัติ (ElevenLabs Only)")
-st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ พากย์เสียงเนียนระดับมนุษย์ด้วย ElevenLabs!")
+st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ พากย์เสียงไทยเนียนระดับมนุษย์ด้วย ElevenLabs!")
 
 # ดึง API Key จาก Streamlit Secrets
 raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -60,11 +60,20 @@ def download_tiktok(url, output_path="input_video.mp4"):
         ydl.download([url])
     return output_path
 
-# ฟังก์ชันแปลงคำอ่านภาษาอังกฤษเป็นภาษาไทยให้ AI อ่านเป๊ะ
+# ฟังก์ชันทำความสะอาดข้อความ ลบอักษรอังกฤษและตัวเลขเพื่อให้ ElevenLabs อ่านไทย 100%
 def clean_text_for_tts(text):
     if not text:
         return "มาดูคลิปนี้กันครับ"
     
+    # แปลงตัวเลขเป็นคำอ่านภาษาไทย
+    num_map = {
+        '0': 'ศูนย์', '1': 'หนึ่ง', '2': 'สอง', '3': 'สาม', '4': 'สี่',
+        '5': 'ห้า', '6': 'หก', '7': 'เจ็ด', '8': 'แปด', '9': 'เก้า'
+    }
+    for digit, word in num_map.items():
+        text = text.replace(digit, word)
+
+    # แปลงคำทับศัพท์อังกฤษฮิตๆ
     word_map = {
         "Mr. Crab": "มิสเตอร์แครปส์",
         "Mr.Crab": "มิสเตอร์แครปส์",
@@ -75,17 +84,18 @@ def clean_text_for_tts(text):
         "Facebook": "เฟซบุ๊ก",
         "YouTube": "ยูทูบ"
     }
-    
     for k, v in word_map.items():
         text = re.sub(re.escape(k), v, text, flags=re.IGNORECASE)
         
+    # ลบอักษรภาษาอังกฤษ A-Z และสัญลักษณ์พิเศษออกทั้งหมด ให้เหลือเฉพาะภาษาไทยและช่องว่าง
+    text = re.sub(r'[a-zA-Z]', '', text)
     text = re.sub(r'[\*\#\_\[\]\(\)\{\}\<\>]', '', text)
     text = re.sub(r'([\.\,\!\?])', r'\1 ', text)
     text = re.sub(r'[^\w\s\u0E00-\u0E7F]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "มาดูคลิปนี้กันครับ"
 
-# ฟังก์ชันสร้างเสียงพากย์ด้วย ElevenLabs API โดยตรง
+# ฟังก์ชันสร้างเสียงพากย์ด้วย ElevenLabs API (บังคับภาษาไทย 100%)
 def generate_voice_elevenlabs(text, choice, output_file="voice.mp3"):
     if not eleven_api_key:
         raise Exception("ไม่พบ ELEVENLABS_API_KEY ใน Streamlit Secrets กรุณาใส่ API Key ใน Secrets ก่อนใช้งานครับ")
@@ -108,6 +118,7 @@ def generate_voice_elevenlabs(text, choice, output_file="voice.mp3"):
     payload = {
         "text": clean_text,
         "model_id": "eleven_multilingual_v2",
+        "language_code": "th",  # ล็อกภาษาให้พากย์เป็นภาษาไทย 100%
         "voice_settings": {
             "stability": 0.5,
             "similarity_boost": 0.75
@@ -167,13 +178,13 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 f'  {{"start_sec": 6, "end_sec": 12, "text": "จังหวะนี้แหละ อย่างพีค..."}}\n'
                 f"]\n\n"
                 f'กฎเหล็กการแต่งบทพากย์ ("text"):\n'
-                f'1. ใช้น้ำเสียงแบบเพื่อนเล่าเรื่องให้เพื่อนฟัง มีคำอุทานสร้างอารมณ์ เช่น "เฮ้ย!", "ว้าว!", "ดูสิ!", "จังหวะนี้คือ!"\n'
-                f"2. เขียนชื่อตัวละครเป็นคำอ่านไทยตรงตัว เช่น Mr. Krabs -> มิสเตอร์แครปส์, SpongeBob -> สปอนจ์บอบ\n"
-                f"3. สคริปต์ต้องตรงกับภาพที่เกิดขึ้นในช่วง start_sec ถึง end_sec นั้นๆ\n"
-                f"4. ห้ามมีอักขระพิเศษ (*, #) หรือสัญลักษณ์แปลกๆ"
+                f'1. ต้องเขียนเป็นภาษาไทยล้วนเท่านั้น ห้ามมีตัวอักษรภาษาอังกฤษ (A-Z) หรือตัวเลขฮินดูอารบิก (1, 2, 3) แม้แต่ตัวเดียว!\n'
+                f'2. ใช้น้ำเสียงแบบเพื่อนเล่าเรื่องให้เพื่อนฟัง มีคำอุทานสร้างอารมณ์ เช่น "เฮ้ย!", "ว้าว!", "ดูสิ!", "จังหวะนี้คือ!"\n'
+                f"3. เขียนชื่อตัวละครเป็นคำอ่านภาษาไทยตรงตัว เช่น Mr. Krabs -> มิสเตอร์แครปส์, SpongeBob -> สปอนจ์บอบ\n"
+                f"4. สคริปต์ต้องตรงกับภาพที่เกิดขึ้นในช่วง start_sec ถึง end_sec นั้นๆ"
             )
             
-            max_retries = 3
+            max_retries = 5
             response = None
             last_error = None
             
@@ -189,8 +200,8 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                     last_error = api_err
                     err_msg = str(api_err)
                     if "503" in err_msg or "UNAVAILABLE" in err_msg:
-                        wait_time = (attempt + 1) * 3
-                        status.warning(f"⏳ เซิร์ฟเวอร์ยุ่ง กำลังลองใหม่อัตโนมัติใน {wait_time} วินาที...")
+                        wait_time = (attempt + 1) * 4
+                        status.warning(f"⏳ เซิร์ฟเวอร์ Gemini กำลังหนาแน่น (503) กำลังรอและลองใหม่อัตโนมัติใน {wait_time} วินาที (ครั้งที่ {attempt + 1}/{max_retries})...")
                         time.sleep(wait_time)
                         continue
                     elif "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
@@ -198,7 +209,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                     else:
                         if attempt == max_retries - 1:
                             raise api_err
-                        time.sleep(2)
+                        time.sleep(3)
 
             if not response or not getattr(response, 'text', None):
                 raise Exception(f"ไม่สามารถเชื่อมต่อ Gemini API ได้: {str(last_error)}")
@@ -212,14 +223,14 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             except Exception:
                 scenes = [{"start_sec": 0, "end_sec": 30, "text": raw_response_text}]
 
-            st.subheader("📝 สคริปต์เล่าเรื่องแบบใส่อารมณ์:")
+            st.subheader("📝 สคริปต์เล่าเรื่องภาษาไทยล้วน:")
             full_script_display = ""
             for i, sc in enumerate(scenes, 1):
                 full_script_display += f"**ฉากที่ {i} [{sc.get('start_sec', 0)}s - {sc.get('end_sec', 0)}s]:** {sc.get('text', '')}\n\n"
             st.markdown(full_script_display)
 
-            # 3. เจนเสียงพากย์ ElevenLabs และตัดคลิปตาม Timestamp
-            status.info("🎙️ กำลังลงเสียงพากย์ด้วย ElevenLabs และรวมฉาก...")
+            # 3. เจนเสียงพากย์ ElevenLabs ภาษาไทย และตัดคลิปตาม Timestamp
+            status.info("🎙️ กำลังลงเสียงพากย์ภาษาไทยด้วย ElevenLabs และรวมฉาก...")
             main_clip = VideoFileClip(video_file)
             scene_clips = []
 
@@ -267,7 +278,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 st.download_button(
                     label="⬇️ ดาวน์โหลดวิดีโอ (.mp4)",
                     data=file,
-                    file_name="narrated_story_video.mp4",
+                    file_name="thai_narrated_story.mp4",
                     mime="video/mp4"
                 )
 
