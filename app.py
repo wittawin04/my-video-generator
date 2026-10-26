@@ -136,7 +136,8 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             3. เว้นวรรคประโยคให้ชัดเจน ห้ามมีอักขระพิเศษ (*, #) หรือวงเล็บ
             """
             
-            candidate_models = ['gemini-3.8-flash', 'gemini-2.5-flash']
+            # อัปเดตใช้เฉพาะโมเดลหลักมาตรฐาน gemini-3.8-flash
+            candidate_models = ['gemini-3.8-flash']
             response = None
             quota_exceeded = False
             last_error = None
@@ -154,7 +155,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                     err_msg = str(api_err)
                     if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
                         quota_exceeded = True
-                        status.warning(f"⏳ โมเดล {model_name} โควตาเต็ม กำลังลองสลับโมเดลถัดไป...")
+                        status.warning(f"⏳ โมเดล {model_name} โควตาประจำวันเต็ม...")
                         time.sleep(2)
                         continue
                     elif "404" in err_msg or "NOT_FOUND" in err_msg:
@@ -167,22 +168,19 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
 
             if not response or not getattr(response, 'text', None):
                 if quota_exceeded:
-                    raise Exception("โควตาฟรีประจำวันของ Gemini API Key นี้หมดแล้ว กรุณาสร้าง API Key ใหม่ใน Google AI Studio แล้วอัปเดตใน Streamlit Secrets ครับ")
+                    raise Exception("โควตาฟรีประจำวันของ Gemini API Key นี้หมดแล้ว (จำกัด 20 คำขอ/วัน) กรุณาสร้าง API Key ใหม่ใน Google AI Studio แล้วอัปเดตใน Streamlit Secrets ครับ")
                 else:
                     raise Exception(f"ไม่สามารถเชื่อมต่อ Gemini API ได้: {str(last_error)}")
 
             raw_response_text = response.text.strip()
-            # ทำความสะอาดสตริงเอา JSON Block ออก
             clean_json_str = re.sub(r'```json\s*|\s*```', '', raw_response_text).strip()
             
             scenes = []
             try:
                 scenes = json.loads(clean_json_str)
             except Exception:
-                # กรณี Gemini ตอบกลับไม่อยู่ในฟอร์แมต JSON ให้จัดกลุ่มเป็นฉากเดียว
                 scenes = [{"start_sec": 0, "end_sec": 30, "text": raw_response_text}]
 
-            # แสดงสคริปต์ที่แบ่งตามฉากให้ผู้ใช้ดู
             st.subheader("📝 สคริปต์และการตัดฉากที่ Gemini วิเคราะห์ได้:")
             full_script_display = ""
             for i, sc in enumerate(scenes, 1):
@@ -202,19 +200,15 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 start_t = float(sc.get('start_sec', 0))
                 end_t = float(sc.get('end_sec', start_t + 5))
 
-                # ป้องกันเวลาเกินความยาวจริงของไฟล์วิดีโอ
                 start_t = max(0.0, min(start_t, main_clip.duration - 0.5))
                 end_t = max(start_t + 0.5, min(end_t, main_clip.duration))
 
-                # สร้างไฟล์เสียงพากย์เฉพาะฉากนี้
                 audio_file = f"voice_scene_{idx}.mp3"
                 generate_tts_free(text, voice_engine, audio_file)
                 sc_audio = AudioFileClip(audio_file)
 
-                # ตัดคลิปช่วงเวลานั้นๆ
                 sc_video = main_clip.subclip(start_t, end_t)
 
-                # ปรับความยาวของวิดีโอฉากนั้นให้พอดีกับความยาวของเสียงพากย์
                 if sc_video.duration < sc_audio.duration:
                     n_repeats = int(np.ceil(sc_audio.duration / sc_video.duration))
                     sc_video = concatenate_videoclips([sc_video] * n_repeats).subclip(0, sc_audio.duration)
@@ -227,7 +221,6 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             if not scene_clips:
                 raise Exception("ไม่สามารถตัดแบ่งฉากวิดีโอได้ กรุณาลองใหม่อีกครั้ง")
 
-            # รวมคลิปทุกฉากเข้าด้วยกัน
             final_clip = concatenate_videoclips(scene_clips)
             
             target_w, target_h = (1080, 1920) if "แนวตั้ง" in aspect_ratio else (1920, 1080)
