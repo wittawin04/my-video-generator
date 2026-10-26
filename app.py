@@ -8,20 +8,12 @@ from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
 st.title("🎬 เครื่องมือสร้างคลิปอธิบายอัตโนมัติ")
+st.write("วางลิงก์วิดีโอ สรุปเนื้อหา และสร้างคลิปพร้อมคำบรรยายได้ทันที!")
 
-api_key = st.sidebar.text_input("ใส่ Gemini API Key:", type="password")
+# ดึง API Key จาก Streamlit Secrets
+api_key = st.secrets.get("GEMINI_API_KEY", "")
 
-# ให้เลือกได้ทั้งอัปโหลดไฟล์ หรือวางลิงก์
-option = st.radio("เลือกวิธีนำเข้าวิดีโอ:", ["อัปโหลดไฟล์วิดีโอ (.mp4)", "วางลิงก์วิดีโอ"])
-
-uploaded_video = None
-video_url = ""
-
-if option == "อัปโหลดไฟล์วิดีโอ (.mp4)":
-    uploaded_video = st.file_uploader("เลือกไฟล์วิดีโอจากเครื่อง:", type=["mp4", "mov"])
-else:
-    video_url = st.text_input("วางลิงก์วิดีโอ (TikTok, YouTube):")
-
+video_url = st.text_input("วางลิงก์วิดีโอ (TikTok, YouTube Shorts ฯลฯ):")
 aspect_ratio = st.selectbox("เลือกขนาดวิดีโอ:", ["แนวตั้ง (9:16)", "แนวนอน (16:9)"])
 
 def download_video(url):
@@ -30,7 +22,6 @@ def download_video(url):
         'outtmpl': 'input_video.mp4',
         'overwrites': True,
         'nocheckcertificate': True,
-        # บังคับใช้ User-Agent ของเบราว์เซอร์ปกติเพื่อป้องกันโดนบล็อก
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -43,29 +34,21 @@ async def generate_tts(text, output_file="voice.mp3"):
 
 if st.button("🚀 เริ่มสร้างวิดีโอ"):
     if not api_key:
-        st.error("กรุณาใส่ Gemini API Key ที่แถบด้านซ้ายก่อนครับ")
-    elif option == "วางลิงก์วิดีโอ" and not video_url:
+        st.error("ไม่พบ GEMINI_API_KEY ในระบบ Secrets กรุณาตั้งค่าใน Streamlit Cloud ก่อนครับ")
+    elif not video_url:
         st.warning("กรุณาใส่ลิงก์วิดีโอก่อนครับ")
-    elif option == "อัปโหลดไฟล์วิดีโอ (.mp4)" and not uploaded_video:
-        st.warning("กรุณาอัปโหลดไฟล์วิดีโอก่อนครับ")
     else:
         try:
             status = st.empty()
-            video_file = "input_video.mp4"
-
-            # 1. จัดเตรียมไฟล์วิดีโอ
-            if option == "อัปโหลดไฟล์วิดีโอ (.mp4)":
-                status.info("📥 กำลังเตรียมไฟล์วิดีโอ...")
-                with open(video_file, "wb") as f:
-                    f.write(uploaded_video.read())
-            else:
-                status.info("📥 กำลังดาวน์โหลดวิดีโอต้นทาง...")
-                download_video(video_url)
+            
+            # 1. ดาวน์โหลดวิดีโอ
+            status.info("📥 กำลังดาวน์โหลดวิดีโอต้นทาง...")
+            video_file = download_video(video_url)
             
             # 2. ถอดความและคิดสคริปต์ด้วย Gemini
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
             client = genai.Client(api_key=api_key)
-            g_file = client.files.upload(file=video_file)
+            uploaded_file = client.files.upload(file=video_file)
             
             prompt = """
             ช่วยวิเคราะห์วิดีโอนี้ และสร้างสคริปต์สรุปสั้นๆ ภาษาไทยสำหรับนำไปทำคลิปอธิบายความยาวไม่เกิน 30 วินาที
@@ -73,7 +56,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
-                contents=[g_file, prompt]
+                contents=[uploaded_file, prompt]
             )
             script_text = response.text.strip()
             st.subheader("📝 สคริปต์ที่ Gemini คิดให้:")
