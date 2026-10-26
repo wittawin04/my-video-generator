@@ -1,4 +1,5 @@
 import os
+import time
 import asyncio
 import streamlit as st
 from google import genai
@@ -63,7 +64,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 status.info("📥 กำลังดาวน์โหลดวิดีโอ TikTok...")
                 download_tiktok(video_url, video_file)
             
-            # 2. ถอดความและคิดสคริปต์ด้วย Gemini 3.8 Flash
+            # 2. ถอดความและคิดสคริปต์ด้วย Gemini (พร้อมระบบลองใหม่อัตโนมัติกรณี 503)
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
             client = genai.Client(api_key=api_key)
             g_file = client.files.upload(file=video_file)
@@ -72,10 +73,24 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             ช่วยวิเคราะห์วิดีโอนี้ และสร้างสคริปต์สรุปสั้นๆ ภาษาไทยสำหรับนำไปทำคลิปอธิบายความยาวไม่เกิน 30 วินาที
             ตอบกลับเป็นข้อความเพรียวๆ สำหรับนำไปอ่านเป็นเสียงพากย์ ไม่ต้องมีสัญลักษณ์พิเศษ
             """
-            response = client.models.generate_content(
-                model='gemini-3.8-flash',
-                contents=[g_file, prompt]
-            )
+            
+            # วนลองใหม่สูงสุด 3 ครั้งหากเจอ 503 UNAVAILABLE
+            response = None
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = client.models.generate_content(
+                        model='gemini-3.8-flash',
+                        contents=[g_file, prompt]
+                    )
+                    break
+                except Exception as api_err:
+                    if ("503" in str(api_err) or "UNAVAILABLE" in str(api_err)) and attempt < max_retries - 1:
+                        status.warning(f"⏳ เซิร์ฟเวอร์ผู้ใช้แน่น กำลังลองใหม่อัตโนมัติครั้งที่ {attempt + 1}/{max_retries}...")
+                        time.sleep(5)
+                    else:
+                        raise api_err
+
             script_text = response.text.strip()
             st.subheader("📝 สคริปต์ที่ Gemini คิดให้:")
             st.write(script_text)
