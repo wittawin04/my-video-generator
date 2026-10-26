@@ -44,8 +44,8 @@ duration_option = st.selectbox("เลือกความยาวสคริ
 voice_selection = st.selectbox(
     "เลือกเอนจินและเสียงพากย์ภาษาไทย:", 
     [
-        "🤖 Botnoi Voice: ผู้หญิงสายเล่าเรื่อง (ต้องใช้ BOTNOI_TOKEN)",
-        "🤖 Botnoi Voice: ผู้ชายสายสปอยล์ (ต้องใช้ BOTNOI_TOKEN)",
+        "🤖 Botnoi Voice: ผู้หญิงสายเล่าเรื่อง (Speaker 584)",
+        "🤖 Botnoi Voice: ผู้ชายสายสปอยล์ (Speaker 1)",
         "⚡ Edge-TTS: Premwadee - ผู้หญิงสายเล่าเรื่อง (ฟรี 100% ไม่ต้องใช้ Key)",
         "⚡ Edge-TTS: Niwat - ผู้ชายสายสปอยล์ (ฟรี 100% ไม่ต้องใช้ Key)"
     ]
@@ -106,47 +106,42 @@ def generate_voice_edge(text, voice_choice, output_file="voice.mp3"):
 
     asyncio.run(run_tts())
 
-# 2. ฟังก์ชันสร้างเสียงด้วย Botnoi Voice API (พร้อมระบบสำรองไป Edge-TTS)
+# 2. ฟังก์ชันสร้างเสียงด้วย Botnoi Voice OpenAPI v1
 def generate_voice_botnoi(text, voice_choice, output_file="voice.mp3"):
     if not botnoi_token:
         raise Exception("ไม่พบ BOTNOI_TOKEN ใน Streamlit Secrets กรุณาตั้งค่าโทเคนบอทน้อยก่อนใช้งานครับ")
 
     clean_text = clean_text_for_tts(text)
-    speaker_id = "1" if "ผู้หญิง" in voice_choice else "2"
+    speaker_id = "584" if "584" in voice_choice or "ผู้หญิง" in voice_choice else "1"
 
-    endpoints = [
-        "https://api.botnoi.ai/ran_voice/v1/generate_audio",
-        "https://api-v2.botnoi.ai/api/service/generate_audio"
-    ]
-    
-    headers = {
-        "Botnoi-Token": botnoi_token,
-        "Content-Type": "application/json"
-    }
+    url = "https://api-voice.botnoi.ai/openapi/v1/generate_audio"
+    headers = {"botnoi-token": botnoi_token}
     payload = {
         "text": clean_text,
         "speaker": speaker_id,
-        "volume": "1",
-        "speed": "1.1",
-        "type_media": "mp3"
+        "volume": 1,
+        "speed": 1,
+        "type_media": "mp3",
+        "save_file": "True",
+        "language": "th"
     }
 
-    for url in endpoints:
-        try:
-            res = requests.post(url, json=payload, headers=headers, timeout=15)
-            if res.status_code == 200:
-                res_json = res.json()
-                audio_url = res_json.get("audio_url")
-                if audio_url:
-                    audio_bytes = requests.get(audio_url, timeout=15).content
-                    with open(output_file, "wb") as f:
-                        f.write(audio_bytes)
-                    return
-        except Exception:
-            continue
-
-    st.warning("⚠️ ไม่สามารถเชื่อมต่อ Botnoi API ได้ ชั่วคราว ระบบกำลังสลับไปใช้ Edge-TTS พากย์แทนให้อัตโนมัติ...")
-    generate_voice_edge(text, voice_choice, output_file)
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=60)
+        res.raise_for_status()
+        res_json = res.json()
+        audio_url = res_json.get("audio_url")
+        
+        if audio_url:
+            audio_bytes = requests.get(audio_url, timeout=30).content
+            with open(output_file, "wb") as f:
+                f.write(audio_bytes)
+            return
+        else:
+            raise Exception(f"ไม่พบ audio_url ในการตอบกลับ: {res_json}")
+    except Exception as err:
+        st.warning(f"⚠️ เกิดข้อผิดพลาดจาก Botnoi API ({err}) ระบบกำลังสลับไปใช้ Edge-TTS พากย์แทนให้อัตโนมัติ...")
+        generate_voice_edge(text, voice_choice, output_file)
 
 # ฟังก์ชันศูนย์รวมเลือกสลับเอนจินเสียง
 def generate_voice(text, voice_choice, output_file="voice.mp3"):
