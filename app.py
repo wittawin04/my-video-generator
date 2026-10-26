@@ -16,13 +16,16 @@ import yt_dlp
 from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
-st.title("🎬 เครื่องมือสร้างคลิปเล่าเรื่องตัดฉากอัตโนมัติ (ElevenLabs Only)")
+st.title("🎬 เครื่องมือสร้างคลิปเล่าเรื่องตัดฉากอัตโนมัติ (ElevenLabs Thai Voice)")
 st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ พากย์เสียงไทยเนียนระดับมนุษย์ด้วย ElevenLabs!")
 
 # ดึง API Key จาก Streamlit Secrets
 raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
 api_key = str(raw_api_key).strip().strip('"').strip("'")
 eleven_api_key = st.secrets.get("ELEVENLABS_API_KEY", "").strip().strip('"').strip("'")
+
+# ระบุ Voice ID ภาษาไทยโดยเฉพาะ
+THAI_VOICE_ID = "yq05eeRaHPMGuWTVpqeP"
 
 # ตัวเลือกนำเข้าวิดีโอ
 option = st.radio("เลือกวิธีนำเข้าวิดีโอ:", ["อัปโหลดไฟล์วิดีโอ (.mp4)", "วางลิงก์ TikTok"])
@@ -37,16 +40,6 @@ else:
 
 aspect_ratio = st.selectbox("เลือกขนาดวิดีโอ:", ["แนวตั้ง (9:16)", "แนวนอน (16:9)"])
 duration_option = st.selectbox("เลือกความยาวสคริปต์และคลิป:", ["30 วินาที", "1 นาที", "2 นาที", "3 นาที", "5 นาที"])
-
-# ตัวเลือกเสียง ElevenLabs เท่านั้น
-voice_selection = st.selectbox(
-    "เลือกเสียงพากย์ ElevenLabs:", 
-    [
-        "Adam (เสียงชาย - นุ่มลึก มีเสน่ห์ เล่าเรื่องปั่นๆ)",
-        "Rachel (เสียงหญิง - สดใส มีพลัง เล่าสนุก)",
-        "Charlie (เสียงชาย - กระฉับกระเฉง สายสปอยล์คลิป)"
-    ]
-)
 
 # ฟังก์ชันดึงวิดีโอสำหรับ TikTok
 def download_tiktok(url, output_path="input_video.mp4"):
@@ -95,21 +88,14 @@ def clean_text_for_tts(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "มาดูคลิปนี้กันครับ"
 
-# ฟังก์ชันสร้างเสียงพากย์ด้วย ElevenLabs API
-def generate_voice_elevenlabs(text, choice, output_file="voice.mp3"):
+# ฟังก์ชันสร้างเสียงพากย์ด้วย ElevenLabs API โดยใช้ Voice ID ภาษาไทย
+def generate_voice_elevenlabs(text, output_file="voice.mp3"):
     if not eleven_api_key:
         raise Exception("ไม่พบ ELEVENLABS_API_KEY ใน Streamlit Secrets กรุณาใส่ API Key ใน Secrets ก่อนใช้งานครับ")
 
     clean_text = clean_text_for_tts(text)
 
-    # Voice ID มาตรฐานของ ElevenLabs
-    voice_id = "pNInz6obpgDQGcFmaJgB" # Adam Default
-    if "Rachel" in choice:
-        voice_id = "21m00Tcm4TlvDq8ikWAM"
-    elif "Charlie" in choice:
-        voice_id = "IKne3meq5aSn9XLyUdCD"
-
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{THAI_VOICE_ID}"
     headers = {
         "Accept": "audio/mpeg",
         "Content-Type": "application/json",
@@ -245,7 +231,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 end_t = max(start_t + 0.5, min(end_t, main_clip.duration))
 
                 audio_file = f"voice_scene_{idx}.mp3"
-                generate_voice_elevenlabs(text, voice_selection, audio_file)
+                generate_voice_elevenlabs(text, audio_file)
                 sc_audio = AudioFileClip(audio_file)
 
                 sc_video = main_clip.subclip(start_t, end_t)
