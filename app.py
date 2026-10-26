@@ -91,34 +91,36 @@ def clean_text_for_tts(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "มาดูคลิปนี้กันครับ"
 
-# ฟังก์ชันจัดการสร้างเสียงพากย์ตามโมเดลที่เลือก
+# ฟังก์ชันจัดการสร้างเสียงพากย์รองรับ fallback ป้องกัน Error
 def generate_voice_audio(text, choice, output_file="voice.mp3"):
     clean_text = clean_text_for_tts(text)
 
     # 1. กลุ่มเสียง ElevenLabs
     if "ElevenLabs" in choice:
         if eleven_api_key:
-            voice_id = "pNInz6obpgDQGcFmaJgB" # Adam Default
+            voice_name = "Adam"
             if "Rachel" in choice:
-                voice_id = "21m00Tcm4TlvDq8ikWAM"
+                voice_name = "Rachel"
             elif "Charlie" in choice:
-                voice_id = "IKne3meq5aSn9XLyUdCD"
+                voice_name = "Charlie"
 
             try:
                 client = ElevenLabs(api_key=eleven_api_key)
-                audio = client.generate(
+                audio_stream = client.generate(
                     text=clean_text,
-                    voice=voice_id,
+                    voice=voice_name,
                     model="eleven_multilingual_v2"
                 )
-                with open(output_file, "wb") as f:
-                    for chunk in audio:
-                        f.write(chunk)
-                return
+                
+                audio_bytes = b"".join(chunk for chunk in audio_stream if chunk)
+                if len(audio_bytes) > 0:
+                    with open(output_file, "wb") as f:
+                        f.write(audio_bytes)
+                    return
             except Exception:
-                pass # หากมีข้อผิดพลาด ให้สลับไปใช้ Edge-TTS สำรองให้อัตโนมัติ
+                pass # สลับไปใช้ Edge-TTS ทันทีหาก ElevenLabs ขัดข้อง
 
-        # สำรองกรณีไม่ได้ใส่ ElevenLabs Key
+        # สลับไปใช้ Edge-TTS สำรองเมื่อ ElevenLabs เกิดข้อผิดพลาด
         async def run_edge_fallback():
             communicate = edge_tts.Communicate(clean_text, "th-TH-PremwadeeNeural", rate="+12%", pitch="+2Hz")
             await communicate.save(output_file)
