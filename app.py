@@ -2,35 +2,27 @@ import os
 import asyncio
 import streamlit as st
 from google import genai
-import yt_dlp
 import edge_tts
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
+from pytubefix import YouTube
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
 st.title("🎬 เครื่องมือสร้างคลิปอธิบายอัตโนมัติ")
 st.write("วางลิงก์วิดีโอ สรุปเนื้อหา และสร้างคลิปพร้อมคำบรรยายได้ทันที!")
 
-# ดึง API Key จาก Streamlit Secrets
 api_key = st.secrets.get("GEMINI_API_KEY", "")
 
 video_url = st.text_input("วางลิงก์วิดีโอ (TikTok, YouTube Shorts ฯลฯ):")
 aspect_ratio = st.selectbox("เลือกขนาดวิดีโอ:", ["แนวตั้ง (9:16)", "แนวนอน (16:9)"])
 
+# ฟังก์ชันดาวน์โหลดคลิปด้วย pytubefix
 def download_video(url):
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': 'input_video.mp4',
-        'overwrites': True,
-        'nocheckcertificate': True,
-        # จำลองการส่งคำขอแบบ Android App เพื่อหลีกเลี่ยงการตรวจจับ Bot จาก YouTube
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web']
-            }
-        }
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+    yt = YouTube(url, client='ANDROID')
+    # ดึงไฟล์วิดีโอที่มีทั้งภาพและเสียงความละเอียดสูงสุด
+    stream = yt.streams.filter(progressive=True, file_extension='mp4').get_highest_resolution()
+    if not stream:
+        stream = yt.streams.get_highest_resolution()
+    stream.download(filename="input_video.mp4")
     return "input_video.mp4"
 
 async def generate_tts(text, output_file="voice.mp3"):
