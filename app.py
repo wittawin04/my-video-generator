@@ -6,6 +6,10 @@ import numpy as np
 import PIL.Image
 from PIL import ImageDraw, ImageFont
 
+# ปลั๊กอินแก้ปัญหา Pillow v10+ ยกเลิกคำว่า ANTIALIAS สำหรับ MoviePy 1.0.3 (ต้องวางก่อน import moviepy)
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = getattr(PIL.Image, 'LANCZOS', PIL.Image.BICUBIC)
+
 import streamlit as st
 from google import genai
 import edge_tts
