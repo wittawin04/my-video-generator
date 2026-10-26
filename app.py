@@ -16,16 +16,15 @@ import yt_dlp
 from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
-st.title("🎬 เครื่องมือสร้างคลิปเล่าเรื่องตัดฉากอัตโนมัติ (ElevenLabs Thai Voice)")
-st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ พากย์เสียงไทยเนียนระดับมนุษย์ด้วย ElevenLabs!")
+st.title("🎬 เครื่องมือสร้างคลิปเล่าเรื่องตัดฉากอัตโนมัติ (Azure TTS)")
+st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ พากย์เสียงไทยเนียนกริบด้วย Microsoft Azure (โควตาฟรี 500,000 ตัวอักษร/เดือน)!")
 
 # ดึง API Key จาก Streamlit Secrets
 raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
 api_key = str(raw_api_key).strip().strip('"').strip("'")
-eleven_api_key = st.secrets.get("ELEVENLABS_API_KEY", "").strip().strip('"').strip("'")
 
-# ระบุ Voice ID ภาษาไทยโดยเฉพาะ
-THAI_VOICE_ID = "yq05eeRaHPMGuWTVpqeP"
+azure_speech_key = st.secrets.get("AZURE_SPEECH_KEY", "").strip().strip('"').strip("'")
+azure_speech_region = st.secrets.get("AZURE_SPEECH_REGION", "southeastasia").strip().strip('"').strip("'")
 
 # ตัวเลือกนำเข้าวิดีโอ
 option = st.radio("เลือกวิธีนำเข้าวิดีโอ:", ["อัปโหลดไฟล์วิดีโอ (.mp4)", "วางลิงก์ TikTok"])
@@ -41,6 +40,16 @@ else:
 aspect_ratio = st.selectbox("เลือกขนาดวิดีโอ:", ["แนวตั้ง (9:16)", "แนวนอน (16:9)"])
 duration_option = st.selectbox("เลือกความยาวสคริปต์และคลิป:", ["30 วินาที", "1 นาที", "2 นาที", "3 นาที", "5 นาที"])
 
+# ตัวเลือกเสียงพากย์ภาษาไทย Azure Neural
+voice_selection = st.selectbox(
+    "เลือกเสียงพากย์ภาษาไทย (Azure Neural):", 
+    [
+        "th-TH-PremwadeeNeural (เสียงผู้หญิง - สดใส เล่าสนุกเป็นธรรมชาติ)",
+        "th-TH-NiwatNeural (เสียงผู้ชาย - หนักแน่น สายสปอยล์หนัง)",
+        "th-TH-AcharaNeural (เสียงผู้หญิง - นุ่มนวล ชัดเจน อ่านข่าว/เล่าเรื่อง)"
+    ]
+)
+
 # ฟังก์ชันดึงวิดีโอสำหรับ TikTok
 def download_tiktok(url, output_path="input_video.mp4"):
     ydl_opts = {
@@ -53,12 +62,11 @@ def download_tiktok(url, output_path="input_video.mp4"):
         ydl.download([url])
     return output_path
 
-# ฟังก์ชันทำความสะอาดข้อความ ลบอักษรอังกฤษและตัวเลขเพื่อให้ ElevenLabs อ่านไทย 100%
+# ฟังก์ชันทำความสะอาดข้อความ ลบอักษรอังกฤษและแปลงตัวเลขเป็นไทย
 def clean_text_for_tts(text):
     if not text:
         return "มาดูคลิปนี้กันครับ"
     
-    # แปลงตัวเลขเป็นคำอ่านภาษาไทย
     num_map = {
         '0': 'ศูนย์', '1': 'หนึ่ง', '2': 'สอง', '3': 'สาม', '4': 'สี่',
         '5': 'ห้า', '6': 'หก', '7': 'เจ็ด', '8': 'แปด', '9': 'เก้า'
@@ -66,7 +74,6 @@ def clean_text_for_tts(text):
     for digit, word in num_map.items():
         text = text.replace(digit, word)
 
-    # แปลงคำทับศัพท์อังกฤษฮิตๆ
     word_map = {
         "Mr. Crab": "มิสเตอร์แครปส์",
         "Mr.Crab": "มิสเตอร์แครปส์",
@@ -80,7 +87,6 @@ def clean_text_for_tts(text):
     for k, v in word_map.items():
         text = re.sub(re.escape(k), v, text, flags=re.IGNORECASE)
         
-    # ลบอักษรภาษาอังกฤษ A-Z และสัญลักษณ์พิเศษออกทั้งหมด ให้เหลือเฉพาะภาษาไทยและช่องว่าง
     text = re.sub(r'[a-zA-Z]', '', text)
     text = re.sub(r'[\*\#\_\[\]\(\)\{\}\<\>]', '', text)
     text = re.sub(r'([\.\,\!\?])', r'\1 ', text)
@@ -88,40 +94,42 @@ def clean_text_for_tts(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "มาดูคลิปนี้กันครับ"
 
-# ฟังก์ชันสร้างเสียงพากย์ด้วย ElevenLabs API โดยใช้ Voice ID ภาษาไทย
-def generate_voice_elevenlabs(text, output_file="voice.mp3"):
-    if not eleven_api_key:
-        raise Exception("ไม่พบ ELEVENLABS_API_KEY ใน Streamlit Secrets กรุณาใส่ API Key ใน Secrets ก่อนใช้งานครับ")
+# ฟังก์ชันสร้างเสียงพากย์ด้วย Microsoft Azure Speech REST API
+def generate_voice_azure(text, voice_choice, output_file="voice.mp3"):
+    if not azure_speech_key:
+        raise Exception("ไม่พบ AZURE_SPEECH_KEY ใน Streamlit Secrets กรุณาตั้งค่าก่อนใช้งานครับ")
 
     clean_text = clean_text_for_tts(text)
+    voice_name = voice_choice.split(" ")[0]
 
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{THAI_VOICE_ID}"
+    url = f"https://{azure_speech_region}.tts.speech.microsoft.com/cognitiveservices/v1"
     headers = {
-        "Accept": "audio/mpeg",
-        "Content-Type": "application/json",
-        "xi-api-key": eleven_api_key
+        "Ocp-Apim-Subscription-Key": azure_speech_key,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "audio-16khz-128kbitrate-mono-mp3",
+        "User-Agent": "StreamlitAutoVideoApp"
     }
-    payload = {
-        "text": clean_text,
-        "model_id": "eleven_multilingual_v2",
-        "voice_settings": {
-            "stability": 0.5,
-            "similarity_boost": 0.75
-        }
-    }
-    
-    res = requests.post(url, json=payload, headers=headers, timeout=30)
+
+    ssml = f"""<speak version='1.0' xml:lang='th-TH'>
+        <voice xml:lang='th-TH' xml:gender='Female' name='{voice_name}'>
+            <prosody rate='+10%'>
+                {clean_text}
+            </prosody>
+        </voice>
+    </speak>"""
+
+    res = requests.post(url, data=ssml.encode('utf-8'), headers=headers, timeout=30)
     if res.status_code == 200 and len(res.content) > 500:
         with open(output_file, "wb") as f:
             f.write(res.content)
     else:
-        raise Exception(f"เกิดข้อผิดพลาดจาก ElevenLabs API (Status Code: {res.status_code}): {res.text}")
+        raise Exception(f"เกิดข้อผิดพลาดจาก Azure Speech API (Status Code: {res.status_code}): {res.text}")
 
 if st.button("🚀 เริ่มสร้างวิดีโอ"):
     if not api_key:
         st.error("ไม่พบ GEMINI_API_KEY ในระบบ Secrets กรุณาตั้งค่าใน Streamlit Cloud ก่อนครับ")
-    elif not eleven_api_key:
-        st.error("ไม่พบ ELEVENLABS_API_KEY ในระบบ Secrets กรุณาตั้งค่าก่อนใช้งานครับ")
+    elif not azure_speech_key:
+        st.error("ไม่พบ AZURE_SPEECH_KEY ในระบบ Secrets กรุณาตั้งค่าก่อนใช้งานครับ")
     elif option == "วางลิงก์ TikTok" and not video_url:
         st.warning("กรุณาใส่ลิงก์วิดีโอก่อนครับ")
     elif option == "อัปโหลดไฟล์วิดีโอ (.mp4)" and not uploaded_file:
@@ -214,8 +222,8 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 full_script_display += f"**ฉากที่ {i} [{sc.get('start_sec', 0)}s - {sc.get('end_sec', 0)}s]:** {sc.get('text', '')}\n\n"
             st.markdown(full_script_display)
 
-            # 3. เจนเสียงพากย์ ElevenLabs ภาษาไทย และตัดคลิปตาม Timestamp
-            status.info("🎙️ กำลังลงเสียงพากย์ภาษาไทยด้วย ElevenLabs และรวมฉาก...")
+            # 3. เจนเสียงพากย์ Azure Neural ภาษาไทย และตัดคลิปตาม Timestamp
+            status.info("🎙️ กำลังลงเสียงพากย์ภาษาไทยด้วย Azure TTS และรวมฉาก...")
             main_clip = VideoFileClip(video_file)
             scene_clips = []
 
@@ -231,7 +239,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 end_t = max(start_t + 0.5, min(end_t, main_clip.duration))
 
                 audio_file = f"voice_scene_{idx}.mp3"
-                generate_voice_elevenlabs(text, audio_file)
+                generate_voice_azure(text, voice_selection, audio_file)
                 sc_audio = AudioFileClip(audio_file)
 
                 sc_video = main_clip.subclip(start_t, end_t)
