@@ -95,7 +95,7 @@ def clean_text_for_tts(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "มาดูคลิปนี้กันครับ"
 
-# ฟังก์ชันสร้างเสียงพากย์ด้วย ElevenLabs API (บังคับภาษาไทย 100%)
+# ฟังก์ชันสร้างเสียงพากย์ด้วย ElevenLabs API
 def generate_voice_elevenlabs(text, choice, output_file="voice.mp3"):
     if not eleven_api_key:
         raise Exception("ไม่พบ ELEVENLABS_API_KEY ใน Streamlit Secrets กรุณาใส่ API Key ใน Secrets ก่อนใช้งานครับ")
@@ -118,7 +118,6 @@ def generate_voice_elevenlabs(text, choice, output_file="voice.mp3"):
     payload = {
         "text": clean_text,
         "model_id": "eleven_multilingual_v2",
-        "language_code": "th",  # ล็อกภาษาให้พากย์เป็นภาษาไทย 100%
         "voice_settings": {
             "stability": 0.5,
             "similarity_boost": 0.75
