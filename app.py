@@ -1,52 +1,41 @@
 import os
 import asyncio
-import requests
 import streamlit as st
 from google import genai
 import edge_tts
+import yt_dlp
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
 st.title("🎬 เครื่องมือสร้างคลิปอธิบายอัตโนมัติ")
-st.write("วางลิงก์วิดีโอ (YouTube, TikTok, IG) ระบบจะไปดึงไฟล์มาสรุป และใส่เสียงพากย์พร้อมคำบรรยายให้อัตโนมัติ!")
+st.write("สร้างคลิปสรุปเนื้อหา พร้อมเสียงพากย์และซับไตเติลภาษาไทยได้ทันที!")
 
 # ดึง API Key จาก Streamlit Secrets
 api_key = st.secrets.get("GEMINI_API_KEY", "")
 
-video_url = st.text_input("วางลิงก์วิดีโอ (YouTube, TikTok, Reels ฯลฯ):")
+# ตัวเลือกรอบรับการใช้งาน
+option = st.radio("เลือกวิธีนำเข้าวิดีโอ:", ["อัปโหลดไฟล์วิดีโอ (.mp4)", "วางลิงก์ TikTok"])
+
+uploaded_file = None
+video_url = ""
+
+if option == "อัปโหลดไฟล์วิดีโอ (.mp4)":
+    uploaded_file = st.file_uploader("เลือกไฟล์วิดีโอจากเครื่อง (มือถือ/คอม):", type=["mp4", "mov"])
+else:
+    video_url = st.text_input("วางลิงก์ TikTok:")
+
 aspect_ratio = st.selectbox("เลือกขนาดวิดีโอ:", ["แนวตั้ง (9:16)", "แนวนอน (16:9)"])
 
-# ฟังก์ชันดึงไฟล์วิดีโอผ่าน Cobalt API (ไม่ติดบล็อก IP)
-def download_video_via_api(url, output_path="input_video.mp4"):
-    cobalt_api = "https://api.cobalt.tools/"
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json"
+# ฟังก์ชันดึงวิดีโอสำหรับ TikTok
+def download_tiktok(url, output_path="input_video.mp4"):
+    ydl_opts = {
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': output_path,
+        'overwrites': True,
+        'nocheckcertificate': True,
     }
-    payload = {"url": url}
-    
-    response = requests.post(cobalt_api, json=payload, headers=headers, timeout=30)
-    response.raise_for_status()
-    data = response.json()
-    
-    video_download_url = None
-    if data.get("status") in ["tunnel", "redirect"]:
-        video_download_url = data.get("url")
-    elif data.get("status") == "picker" and data.get("picker"):
-        video_download_url = data["picker"][0].get("url")
-        
-    if not video_download_url:
-        error_text = data.get("text", "ไม่สามารถดึงวิดีโอจากลิงก์นี้ได้")
-        raise Exception(f"API Error: {error_text}")
-        
-    # โหลดไฟล์วิดีโอ MP4 จากลิงก์ตรงที่ได้มา
-    res = requests.get(video_download_url, stream=True, timeout=60)
-    res.raise_for_status()
-    
-    with open(output_path, "wb") as f:
-        for chunk in res.iter_content(chunk_size=8192):
-            f.write(chunk)
-            
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
     return output_path
 
 async def generate_tts(text, output_file="voice.mp3"):
@@ -56,20 +45,28 @@ async def generate_tts(text, output_file="voice.mp3"):
 if st.button("🚀 เริ่มสร้างวิดีโอ"):
     if not api_key:
         st.error("ไม่พบ GEMINI_API_KEY ในระบบ Secrets กรุณาตั้งค่าใน Streamlit Cloud ก่อนครับ")
-    elif not video_url:
+    elif option == "วางลิงก์ TikTok" and not video_url:
         st.warning("กรุณาใส่ลิงก์วิดีโอก่อนครับ")
+    elif option == "อัปโหลดไฟล์วิดีโอ (.mp4)" and not uploaded_file:
+        st.warning("กรุณาเลือกไฟล์วิดีโอก่อนครับ")
     else:
         try:
             status = st.empty()
-            
-            # 1. ดาวน์โหลดวิดีโอผ่าน Cobalt API
-            status.info("🌐 กำลังส่งลิงก์ไปให้ระบบดาวน์โหลดไฟล์วิดีโอ...")
-            video_file = download_video_via_api(video_url)
+            video_file = "input_video.mp4"
+
+            # 1. เตรียมไฟล์วิดีโอ
+            if option == "อัปโหลดไฟล์วิดีโอ (.mp4)":
+                status.info("📥 กำลังเตรียมไฟล์วิดีโอ...")
+                with open(video_file, "wb") as f:
+                    f.write(uploaded_file.read())
+            else:
+                status.info("📥 กำลังดาวน์โหลดวิดีโอ TikTok...")
+                download_tiktok(video_url, video_file)
             
             # 2. ถอดความและคิดสคริปต์ด้วย Gemini
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
             client = genai.Client(api_key=api_key)
-            uploaded_file = client.files.upload(file=video_file)
+            g_file = client.files.upload(file=video_file)
             
             prompt = """
             ช่วยวิเคราะห์วิดีโอนี้ และสร้างสคริปต์สรุปสั้นๆ ภาษาไทยสำหรับนำไปทำคลิปอธิบายความยาวไม่เกิน 30 วินาที
@@ -77,7 +74,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             """
             response = client.models.generate_content(
                 model='gemini-2.5-flash',
-                contents=[uploaded_file, prompt]
+                contents=[g_file, prompt]
             )
             script_text = response.text.strip()
             st.subheader("📝 สคริปต์ที่ Gemini คิดให้:")
