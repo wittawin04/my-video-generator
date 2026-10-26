@@ -93,7 +93,7 @@ def create_subtitle_clip(text, target_w, target_h, duration):
     box_h = len(lines) * line_height + (padding * 2)
     box_w = target_w - 100
 
-    # สร้างภาพพืนหลังกรอบดำโปร่งแสง
+    # สร้างภาพพื้นหลังกรอบดำโปร่งแสง
     img = PIL.Image.new("RGBA", (box_w, box_h), (0, 0, 0, 190))
     draw = ImageDraw.Draw(img)
 
@@ -135,7 +135,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 status.info("📥 กำลังดาวน์โหลดวิดีโอ TikTok...")
                 download_tiktok(video_url, video_file)
             
-            # 2. ถอดความและคิดสคริปต์ด้วย Gemini
+            # 2. ถอดความและคิดสคริปต์ด้วย Gemini 3.8 Flash (พร้อมโมเดลสำรอง 2.5 Flash)
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
             client = genai.Client(api_key=api_key)
             g_file = client.files.upload(file=video_file)
@@ -145,7 +145,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             ตอบกลับเป็นข้อความเพรียวๆ สำหรับนำไปอ่านเป็นเสียงพากย์ ไม่ต้องมีสัญลักษณ์พิเศษ หรือวงเล็บใดๆ
             """
             
-            candidate_models = ['gemini-2.5-flash', 'gemini-2.0-flash']
+            candidate_models = ['gemini-3.8-flash', 'gemini-2.5-flash']
             response = None
             quota_exceeded = False
             last_error = None
@@ -173,7 +173,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                         time.sleep(3)
                         continue
                     else:
-                        raise api_err
+                        continue
 
             if not response or not getattr(response, 'text', None):
                 if quota_exceeded:
