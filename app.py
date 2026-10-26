@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import asyncio
 import PIL.Image
@@ -51,9 +52,33 @@ def download_tiktok(url, output_path="input_video.mp4"):
         ydl.download([url])
     return output_path
 
+# ฟังก์ชันทำความสะอาดข้อความตัดสัญลักษณ์พิเศษออกก่อนส่งไปสร้างเสียงพากย์
+def clean_text_for_tts(text):
+    if not text:
+        return "นี่คือวิดีโอสรุปเนื้อหาหลักครับ"
+    # ลบสัญลักษณ์ Markdown และสัญลักษณ์พิเศษ
+    text = re.sub(r'[\*\#\_\[\]\(\)\{\}\<\>]', '', text)
+    # กรองเอาเฉพาะภาษาไทย ภาษาอังกฤษ ตัวเลข และเครื่องหมายวรรคตอนพื้นฐาน
+    text = re.sub(r'[^\w\s\d\.\,\!\?\u0E00-\u0E7F]', ' ', text)
+    # ลบการเว้นวรรคซ้ำๆ และการขึ้นบรรทัดใหม่
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text if text else "นี่คือวิดีโอสรุปเนื้อหาหลักครับ"
+
 async def generate_tts(text, output_file="voice.mp3"):
-    communicate = edge_tts.Communicate(text, "th-TH-NiwatNeural")
-    await communicate.save(output_file)
+    clean_text = clean_text_for_tts(text)
+    # ลิสต์เสียงพากย์ไทย (เสียงหลัก นิวัฒน์ / เสียงสำรอง เปรมวดี)
+    voices = ["th-TH-NiwatNeural", "th-TH-PremwadeeNeural"]
+    
+    for voice in voices:
+        try:
+            communicate = edge_tts.Communicate(clean_text, voice)
+            await communicate.save(output_file)
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                return
+        except Exception:
+            continue
+            
+    raise Exception("ไม่สามารถสร้างไฟล์เสียงพากย์ได้ กรุณาลองใหม่อีกครั้ง")
 
 if st.button("🚀 เริ่มสร้างวิดีโอ"):
     if not api_key:
@@ -102,13 +127,9 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                     else:
                         raise api_err
 
-            # ตรวจสอบและป้องกันสคริปต์ว่างเปล่า
             script_text = ""
             if response and getattr(response, 'text', None):
                 script_text = response.text.strip()
-            
-            if not script_text:
-                script_text = "นี่คือวิดีโอสรุปเนื้อหาหลักที่ประมวลผลโดยระบบอัตโนมัติครับ"
 
             st.subheader("📝 สคริปต์ที่ Gemini คิดให้:")
             st.write(script_text)
@@ -129,7 +150,8 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             target_w, target_h = (1080, 1920) if "แนวตั้ง" in aspect_ratio else (1920, 1080)
             final_clip = final_clip.resize(newsize=(target_w, target_h))
 
-            txt_clip = TextClip(script_text, fontsize=40, color='white', bg_color='black', method='caption', size=(target_w - 100, None))
+            clean_script = clean_text_for_tts(script_text)
+            txt_clip = TextClip(clean_script, fontsize=40, color='white', bg_color='black', method='caption', size=(target_w - 100, None))
             txt_clip = txt_clip.set_pos(('center', 'bottom')).set_duration(final_clip.duration)
 
             video_result = CompositeVideoClip([final_clip, txt_clip])
