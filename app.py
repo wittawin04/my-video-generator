@@ -97,7 +97,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 status.info("📥 กำลังดาวน์โหลดวิดีโอ TikTok...")
                 download_tiktok(video_url, video_file)
             
-            # 2. ถอดความและคิดสคริปต์ด้วย Gemini (พร้อมระบบ Fallback สลับโมเดลอัตโนมัติ)
+            # 2. ถอดความและคิดสคริปต์ด้วย Gemini (กรองข้อผิดพลาด 404 และ 429)
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
             client = genai.Client(api_key=api_key)
             g_file = client.files.upload(file=video_file)
@@ -107,9 +107,10 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             ตอบกลับเป็นข้อความเพรียวๆ สำหรับนำไปอ่านเป็นเสียงพากย์ ไม่ต้องมีสัญลักษณ์พิเศษ หรือวงเล็บใดๆ
             """
             
-            # รายชื่อโมเดลที่ต้องการสลับใช้งานกรณีโมเดลหลักโควตาเต็ม (429)
-            candidate_models = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+            # รายชื่อโมเดลปัจจุบันที่ใช้กับ Google GenAI SDK
+            candidate_models = ['gemini-3.8-flash', 'gemini-2.5-flash']
             response = None
+            quota_exceeded = False
             last_error = None
             
             for model_name in candidate_models:
@@ -123,9 +124,14 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 except Exception as api_err:
                     last_error = api_err
                     err_msg = str(api_err)
+                    
                     if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                        status.warning(f"⏳ โมเดล {model_name} โควตาเต็ม กำลังสลับไปใช้โมเดลสำรอง...")
+                        quota_exceeded = True
+                        status.warning(f"⏳ โมเดล {model_name} โควตาเต็ม กำลังลองสลับโมเดลถัดไป...")
                         time.sleep(2)
+                        continue
+                    elif "404" in err_msg or "NOT_FOUND" in err_msg:
+                        # ข้ามโมเดลที่ไม่มีในระบบโดยไม่ขัดจังหวะโปรแกรม
                         continue
                     elif "503" in err_msg or "UNAVAILABLE" in err_msg:
                         time.sleep(3)
@@ -134,7 +140,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                         continue
 
             if not response or not getattr(response, 'text', None):
-                if "429" in str(last_error) or "RESOURCE_EXHAUSTED" in str(last_error):
+                if quota_exceeded:
                     raise Exception("โควตาฟรีประจำวันของ Gemini API Key นี้หมดแล้ว กรุณาเปลี่ยน API Key ใหม่ใน Streamlit Secrets ครับ")
                 else:
                     raise Exception(f"ไม่สามารถเชื่อมต่อ Gemini API ได้: {str(last_error)}")
