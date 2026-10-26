@@ -3,7 +3,13 @@ import time
 import asyncio
 import PIL.Image
 
-# แก้ปัญหา Pillow v10+ ยกเลิกคำว่า ANTIALIAS ให้ทำงานร่วมกับ MoviePy ได้
+# 1. ปลดล็อกระบบความปลอดภัยของ ImageMagick บน Streamlit Cloud ให้สร้าง TextClip ได้
+os.makedirs("/tmp/magick", exist_ok=True)
+with open("/tmp/magick/policy.xml", "w") as f:
+    f.write('<policymap><policy domain="path" rights="read | write" pattern="@*"/></policymap>')
+os.environ["MAGICK_CONFIGURE_PATH"] = "/tmp/magick"
+
+# 2. แก้ปัญหา Pillow v10+ ยกเลิกคำว่า ANTIALIAS ให้ทำงานร่วมกับ MoviePy ได้
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = getattr(PIL.Image, 'LANCZOS', PIL.Image.BICUBIC)
 
