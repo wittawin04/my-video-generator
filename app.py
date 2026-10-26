@@ -2,30 +2,23 @@ import os
 import re
 import time
 import asyncio
+import numpy as np
 import PIL.Image
-
-# 1. ปลดล็อกระบบความปลอดภัยของ ImageMagick บน Streamlit Cloud ให้สร้าง TextClip ได้
-os.makedirs("/tmp/magick", exist_ok=True)
-with open("/tmp/magick/policy.xml", "w") as f:
-    f.write('<policymap><policy domain="path" rights="read | write" pattern="@*"/></policymap>')
-os.environ["MAGICK_CONFIGURE_PATH"] = "/tmp/magick"
-
-# 2. แก้ปัญหา Pillow v10+ ยกเลิกคำว่า ANTIALIAS ให้ทำงานร่วมกับ MoviePy ได้
-if not hasattr(PIL.Image, 'ANTIALIAS'):
-    PIL.Image.ANTIALIAS = getattr(PIL.Image, 'LANCZOS', PIL.Image.BICUBIC)
+from PIL import ImageDraw, ImageFont
 
 import streamlit as st
 from google import genai
 import edge_tts
 import yt_dlp
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
+from moviepy.editor import VideoFileClip, ImageClip, CompositeVideoClip, AudioFileClip
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
 st.title("🎬 เครื่องมือสร้างคลิปอธิบายอัตโนมัติ")
 st.write("สร้างคลิปสรุปเนื้อหา พร้อมเสียงพากย์และซับไตเติลภาษาไทยได้ทันที!")
 
-# ดึง API Key จาก Streamlit Secrets
-api_key = st.secrets.get("GEMINI_API_KEY", "")
+# ดึง API Key จาก Streamlit Secrets พร้อมลบช่องว่างส่วนเกิน
+raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
+api_key = str(raw_api_key).strip().strip('"').strip("'")
 
 # ตัวเลือกรองรับการใช้งาน
 option = st.radio("เลือกวิธีนำเข้าวิดีโอ:", ["อัปโหลดไฟล์วิดีโอ (.mp4)", "วางลิงก์ TikTok"])
@@ -76,9 +69,54 @@ async def generate_tts(text, output_file="voice.mp3"):
             
     raise Exception("ไม่สามารถสร้างไฟล์เสียงพากย์ได้ กรุณาลองใหม่อีกครั้ง")
 
+# ฟังก์ชันสร้างข้อความซับไตเติลด้วย Pillow (ไม่ง้อ ImageMagick)
+def create_subtitle_clip(text, target_w, target_h, duration):
+    max_chars = 32 if target_w == 1080 else 55
+    words = text.split()
+    lines = []
+    current_line = ""
+    
+    for word in words:
+        if len(current_line) + len(word) + 1 <= max_chars:
+            current_line = f"{current_line} {word}".strip()
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+    if current_line:
+        lines.append(current_line)
+    if not lines:
+        lines = [text]
+
+    padding = 20
+    line_height = 45
+    box_h = len(lines) * line_height + (padding * 2)
+    box_w = target_w - 100
+
+    # สร้างภาพพืนหลังกรอบดำโปร่งแสง
+    img = PIL.Image.new("RGBA", (box_w, box_h), (0, 0, 0, 190))
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", 32)
+    except Exception:
+        font = ImageFont.load_default()
+
+    y = padding
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        text_w = bbox[2] - bbox[0]
+        x = max((box_w - text_w) // 2, 10)
+        draw.text((x, y), line, fill="white", font=font)
+        y += line_height
+
+    img_np = np.array(img)
+    clip = ImageClip(img_np).set_duration(duration)
+    return clip.set_pos(('center', target_h - box_h - 60))
+
 if st.button("🚀 เริ่มสร้างวิดีโอ"):
     if not api_key:
-        st.error("ไม่พบ GEMINI_API_KEY ในระบบ Secrets กรุณาตั้งค่าใน Streamlit Cloud ก่อนครับ")
+        st.error("ไม่พบ GEMINI_API_KEY ในระบบ Secrets หรือ API Key ว่างเปล่า กรุณาตั้งค่าใน Streamlit Cloud ก่อนครับ")
     elif option == "วางลิงก์ TikTok" and not video_url:
         st.warning("กรุณาใส่ลิงก์วิดีโอก่อนครับ")
     elif option == "อัปโหลดไฟล์วิดีโอ (.mp4)" and not uploaded_file:
@@ -97,7 +135,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 status.info("📥 กำลังดาวน์โหลดวิดีโอ TikTok...")
                 download_tiktok(video_url, video_file)
             
-            # 2. ถอดความและคิดสคริปต์ด้วย Gemini (กรองข้อผิดพลาด 404 และ 429)
+            # 2. ถอดความและคิดสคริปต์ด้วย Gemini
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
             client = genai.Client(api_key=api_key)
             g_file = client.files.upload(file=video_file)
@@ -107,8 +145,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             ตอบกลับเป็นข้อความเพรียวๆ สำหรับนำไปอ่านเป็นเสียงพากย์ ไม่ต้องมีสัญลักษณ์พิเศษ หรือวงเล็บใดๆ
             """
             
-            # รายชื่อโมเดลปัจจุบันที่ใช้กับ Google GenAI SDK
-            candidate_models = ['gemini-3.8-flash', 'gemini-2.5-flash']
+            candidate_models = ['gemini-2.5-flash', 'gemini-2.0-flash']
             response = None
             quota_exceeded = False
             last_error = None
@@ -131,17 +168,16 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                         time.sleep(2)
                         continue
                     elif "404" in err_msg or "NOT_FOUND" in err_msg:
-                        # ข้ามโมเดลที่ไม่มีในระบบโดยไม่ขัดจังหวะโปรแกรม
                         continue
                     elif "503" in err_msg or "UNAVAILABLE" in err_msg:
                         time.sleep(3)
                         continue
                     else:
-                        continue
+                        raise api_err
 
             if not response or not getattr(response, 'text', None):
                 if quota_exceeded:
-                    raise Exception("โควตาฟรีประจำวันของ Gemini API Key นี้หมดแล้ว กรุณาเปลี่ยน API Key ใหม่ใน Streamlit Secrets ครับ")
+                    raise Exception("โควตาฟรีประจำวันของ Gemini API Key นี้หมดแล้ว กรุณาสร้าง API Key ใหม่ใน Google AI Studio แล้วอัปเดตใน Streamlit Secrets ครับ")
                 else:
                     raise Exception(f"ไม่สามารถเชื่อมต่อ Gemini API ได้: {str(last_error)}")
 
@@ -165,9 +201,9 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             target_w, target_h = (1080, 1920) if "แนวตั้ง" in aspect_ratio else (1920, 1080)
             final_clip = final_clip.resize(newsize=(target_w, target_h))
 
+            # สร้างซับไตเติลด้วยระบบ PIL (ปลอดข้อผิดพลาด ImageMagick)
             clean_script = clean_text_for_tts(script_text)
-            txt_clip = TextClip(clean_script, fontsize=40, color='white', bg_color='black', method='caption', size=(target_w - 100, None))
-            txt_clip = txt_clip.set_pos(('center', 'bottom')).set_duration(final_clip.duration)
+            txt_clip = create_subtitle_clip(clean_script, target_w, target_h, final_clip.duration)
 
             video_result = CompositeVideoClip([final_clip, txt_clip])
             output_filename = "output_video.mp4"
