@@ -2,7 +2,7 @@ import os
 import re
 import time
 import json
-import requests
+import asyncio
 import numpy as np
 import PIL.Image
 
@@ -12,19 +12,17 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
 
 import streamlit as st
 from google import genai
+import edge_tts
 import yt_dlp
 from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
-st.title("🎬 เครื่องมือสร้างคลิปเล่าเรื่องตัดฉากอัตโนมัติ (Azure TTS)")
-st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ พากย์เสียงไทยเนียนกริบด้วย Microsoft Azure (โควตาฟรี 500,000 ตัวอักษร/เดือน)!")
+st.title("🎬 เครื่องมือสร้างคลิปเล่าเรื่องตัดฉากอัตโนมัติ")
+st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ เสียงพากย์ไทยเนียนกริบ ฟรี 100% ไม่ต้องผูกบัตร!")
 
-# ดึง API Key จาก Streamlit Secrets
+# ดึง API Key ของ Gemini จาก Streamlit Secrets (ใช้อันเดียวจบ)
 raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
 api_key = str(raw_api_key).strip().strip('"').strip("'")
-
-azure_speech_key = st.secrets.get("AZURE_SPEECH_KEY", "").strip().strip('"').strip("'")
-azure_speech_region = st.secrets.get("AZURE_SPEECH_REGION", "southeastasia").strip().strip('"').strip("'")
 
 # ตัวเลือกนำเข้าวิดีโอ
 option = st.radio("เลือกวิธีนำเข้าวิดีโอ:", ["อัปโหลดไฟล์วิดีโอ (.mp4)", "วางลิงก์ TikTok"])
@@ -40,13 +38,12 @@ else:
 aspect_ratio = st.selectbox("เลือกขนาดวิดีโอ:", ["แนวตั้ง (9:16)", "แนวนอน (16:9)"])
 duration_option = st.selectbox("เลือกความยาวสคริปต์และคลิป:", ["30 วินาที", "1 นาที", "2 นาที", "3 นาที", "5 นาที"])
 
-# ตัวเลือกเสียงพากย์ภาษาไทย Azure Neural
+# ตัวเลือกเสียงพากย์ภาษาไทย Neural (เสียงเดียวกับ Microsoft Azure)
 voice_selection = st.selectbox(
-    "เลือกเสียงพากย์ภาษาไทย (Azure Neural):", 
+    "เลือกเสียงพากย์ภาษาไทย (Microsoft Neural):", 
     [
         "th-TH-PremwadeeNeural (เสียงผู้หญิง - สดใส เล่าสนุกเป็นธรรมชาติ)",
-        "th-TH-NiwatNeural (เสียงผู้ชาย - หนักแน่น สายสปอยล์หนัง)",
-        "th-TH-AcharaNeural (เสียงผู้หญิง - นุ่มนวล ชัดเจน อ่านข่าว/เล่าเรื่อง)"
+        "th-TH-NiwatNeural (เสียงผู้ชาย - หนักแน่น สายสปอยล์หนัง)"
     ]
 )
 
@@ -62,7 +59,7 @@ def download_tiktok(url, output_path="input_video.mp4"):
         ydl.download([url])
     return output_path
 
-# ฟังก์ชันทำความสะอาดข้อความ ลบอักษรอังกฤษและแปลงตัวเลขเป็นไทย
+# ฟังก์ชันทำความสะอาดข้อความ แปลงตัวเลขและลบอังกฤษเพื่อให้พากย์ไทยเป๊ะ
 def clean_text_for_tts(text):
     if not text:
         return "มาดูคลิปนี้กันครับ"
@@ -94,42 +91,20 @@ def clean_text_for_tts(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "มาดูคลิปนี้กันครับ"
 
-# ฟังก์ชันสร้างเสียงพากย์ด้วย Microsoft Azure Speech REST API
-def generate_voice_azure(text, voice_choice, output_file="voice.mp3"):
-    if not azure_speech_key:
-        raise Exception("ไม่พบ AZURE_SPEECH_KEY ใน Streamlit Secrets กรุณาตั้งค่าก่อนใช้งานครับ")
-
+# ฟังก์ชันสร้างเสียงพากย์ด้วย Edge-TTS (ฟรี 100% ไม่ต้องใช้ API Key)
+def generate_voice_edge(text, voice_choice, output_file="voice.mp3"):
     clean_text = clean_text_for_tts(text)
-    voice_name = voice_choice.split(" ")[0]
+    voice_code = "th-TH-PremwadeeNeural" if "Premwadee" in voice_choice else "th-TH-NiwatNeural"
 
-    url = f"https://{azure_speech_region}.tts.speech.microsoft.com/cognitiveservices/v1"
-    headers = {
-        "Ocp-Apim-Subscription-Key": azure_speech_key,
-        "Content-Type": "application/ssml+xml",
-        "X-Microsoft-OutputFormat": "audio-16khz-128kbitrate-mono-mp3",
-        "User-Agent": "StreamlitAutoVideoApp"
-    }
+    async def run_tts():
+        communicate = edge_tts.Communicate(clean_text, voice_code, rate="+10%", pitch="+0Hz")
+        await communicate.save(output_file)
 
-    ssml = f"""<speak version='1.0' xml:lang='th-TH'>
-        <voice xml:lang='th-TH' xml:gender='Female' name='{voice_name}'>
-            <prosody rate='+10%'>
-                {clean_text}
-            </prosody>
-        </voice>
-    </speak>"""
-
-    res = requests.post(url, data=ssml.encode('utf-8'), headers=headers, timeout=30)
-    if res.status_code == 200 and len(res.content) > 500:
-        with open(output_file, "wb") as f:
-            f.write(res.content)
-    else:
-        raise Exception(f"เกิดข้อผิดพลาดจาก Azure Speech API (Status Code: {res.status_code}): {res.text}")
+    asyncio.run(run_tts())
 
 if st.button("🚀 เริ่มสร้างวิดีโอ"):
     if not api_key:
         st.error("ไม่พบ GEMINI_API_KEY ในระบบ Secrets กรุณาตั้งค่าใน Streamlit Cloud ก่อนครับ")
-    elif not azure_speech_key:
-        st.error("ไม่พบ AZURE_SPEECH_KEY ในระบบ Secrets กรุณาตั้งค่าก่อนใช้งานครับ")
     elif option == "วางลิงก์ TikTok" and not video_url:
         st.warning("กรุณาใส่ลิงก์วิดีโอก่อนครับ")
     elif option == "อัปโหลดไฟล์วิดีโอ (.mp4)" and not uploaded_file:
@@ -222,8 +197,8 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 full_script_display += f"**ฉากที่ {i} [{sc.get('start_sec', 0)}s - {sc.get('end_sec', 0)}s]:** {sc.get('text', '')}\n\n"
             st.markdown(full_script_display)
 
-            # 3. เจนเสียงพากย์ Azure Neural ภาษาไทย และตัดคลิปตาม Timestamp
-            status.info("🎙️ กำลังลงเสียงพากย์ภาษาไทยด้วย Azure TTS และรวมฉาก...")
+            # 3. เจนเสียงพากย์ Edge-TTS ภาษาไทย และตัดคลิปตาม Timestamp
+            status.info("🎙️ กำลังลงเสียงพากย์ภาษาไทยด้วย Edge-TTS และรวมฉาก...")
             main_clip = VideoFileClip(video_file)
             scene_clips = []
 
@@ -239,7 +214,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 end_t = max(start_t + 0.5, min(end_t, main_clip.duration))
 
                 audio_file = f"voice_scene_{idx}.mp3"
-                generate_voice_azure(text, voice_selection, audio_file)
+                generate_voice_edge(text, voice_selection, audio_file)
                 sc_audio = AudioFileClip(audio_file)
 
                 sc_video = main_clip.subclip(start_t, end_t)
