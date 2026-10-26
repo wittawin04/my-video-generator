@@ -1,29 +1,53 @@
 import os
 import asyncio
+import requests
 import streamlit as st
 from google import genai
 import edge_tts
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
-from pytubefix import YouTube
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
 st.title("🎬 เครื่องมือสร้างคลิปอธิบายอัตโนมัติ")
-st.write("วางลิงก์วิดีโอ สรุปเนื้อหา และสร้างคลิปพร้อมคำบรรยายได้ทันที!")
+st.write("วางลิงก์วิดีโอ (YouTube, TikTok, IG) ระบบจะไปดึงไฟล์มาสรุป และใส่เสียงพากย์พร้อมคำบรรยายให้อัตโนมัติ!")
 
+# ดึง API Key จาก Streamlit Secrets
 api_key = st.secrets.get("GEMINI_API_KEY", "")
 
-video_url = st.text_input("วางลิงก์วิดีโอ (TikTok, YouTube Shorts ฯลฯ):")
+video_url = st.text_input("วางลิงก์วิดีโอ (YouTube, TikTok, Reels ฯลฯ):")
 aspect_ratio = st.selectbox("เลือกขนาดวิดีโอ:", ["แนวตั้ง (9:16)", "แนวนอน (16:9)"])
 
-# ฟังก์ชันดาวน์โหลดคลิปด้วย pytubefix
-def download_video(url):
-    yt = YouTube(url, client='ANDROID')
-    # ดึงไฟล์วิดีโอที่มีทั้งภาพและเสียงความละเอียดสูงสุด
-    stream = yt.streams.filter(progressive=True, file_extension='mp4').get_highest_resolution()
-    if not stream:
-        stream = yt.streams.get_highest_resolution()
-    stream.download(filename="input_video.mp4")
-    return "input_video.mp4"
+# ฟังก์ชันดึงไฟล์วิดีโอผ่าน Cobalt API (ไม่ติดบล็อก IP)
+def download_video_via_api(url, output_path="input_video.mp4"):
+    cobalt_api = "https://api.cobalt.tools/"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    payload = {"url": url}
+    
+    response = requests.post(cobalt_api, json=payload, headers=headers, timeout=30)
+    response.raise_for_status()
+    data = response.json()
+    
+    video_download_url = None
+    if data.get("status") in ["tunnel", "redirect"]:
+        video_download_url = data.get("url")
+    elif data.get("status") == "picker" and data.get("picker"):
+        video_download_url = data["picker"][0].get("url")
+        
+    if not video_download_url:
+        error_text = data.get("text", "ไม่สามารถดึงวิดีโอจากลิงก์นี้ได้")
+        raise Exception(f"API Error: {error_text}")
+        
+    # โหลดไฟล์วิดีโอ MP4 จากลิงก์ตรงที่ได้มา
+    res = requests.get(video_download_url, stream=True, timeout=60)
+    res.raise_for_status()
+    
+    with open(output_path, "wb") as f:
+        for chunk in res.iter_content(chunk_size=8192):
+            f.write(chunk)
+            
+    return output_path
 
 async def generate_tts(text, output_file="voice.mp3"):
     communicate = edge_tts.Communicate(text, "th-TH-NiwatNeural")
@@ -38,9 +62,9 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
         try:
             status = st.empty()
             
-            # 1. ดาวน์โหลดวิดีโอ
-            status.info("📥 กำลังดาวน์โหลดวิดีโอต้นทาง...")
-            video_file = download_video(video_url)
+            # 1. ดาวน์โหลดวิดีโอผ่าน Cobalt API
+            status.info("🌐 กำลังส่งลิงก์ไปให้ระบบดาวน์โหลดไฟล์วิดีโอ...")
+            video_file = download_video_via_api(video_url)
             
             # 2. ถอดความและคิดสคริปต์ด้วย Gemini
             status.info("🤖 Gemini กำลังวิเคราะห์วิดีโอและสร้างคำบรรยาย...")
