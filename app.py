@@ -91,42 +91,43 @@ def clean_text_for_tts(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text if text else "มาดูคลิปนี้กันครับ"
 
-# ฟังก์ชันจัดการสร้างเสียงพากย์รองรับ fallback ป้องกัน Error
+# ฟังก์ชันสร้างเสียงพากย์รองรับ fallback ป้องกันข้อผิดพลาด No Audio
 def generate_voice_audio(text, choice, output_file="voice.mp3"):
     clean_text = clean_text_for_tts(text)
 
-    # 1. กลุ่มเสียง ElevenLabs
+    # 1. กลุ่มเสียง ElevenLabs (ใช้ Voice ID ตรง 20 หลัก)
     if "ElevenLabs" in choice:
         if eleven_api_key:
-            voice_name = "Adam"
+            # Voice IDs มาตรฐานของ ElevenLabs
+            voice_id = "pNInz6obpgDQGcFmaJgB" # Adam
             if "Rachel" in choice:
-                voice_name = "Rachel"
+                voice_id = "21m00Tcm4TlvDq8ikWAM" # Rachel
             elif "Charlie" in choice:
-                voice_name = "Charlie"
+                voice_id = "IKne3meq5aSn9XLyUdCD" # Charlie
 
             try:
                 client = ElevenLabs(api_key=eleven_api_key)
                 audio_stream = client.generate(
                     text=clean_text,
-                    voice=voice_name,
+                    voice=voice_id,
                     model="eleven_multilingual_v2"
                 )
                 
                 audio_bytes = b"".join(chunk for chunk in audio_stream if chunk)
-                if len(audio_bytes) > 0:
+                if len(audio_bytes) > 1000: # ต้องได้ไฟล์เสียงขนาดเกิน 1KB
                     with open(output_file, "wb") as f:
                         f.write(audio_bytes)
                     return
             except Exception:
-                pass # สลับไปใช้ Edge-TTS ทันทีหาก ElevenLabs ขัดข้อง
+                pass # สลับไปใช้ Edge-TTS สำรองทันทีหากเกิดข้อผิดพลาด
 
-        # สลับไปใช้ Edge-TTS สำรองเมื่อ ElevenLabs เกิดข้อผิดพลาด
+        # สำรองกรณีไม่ได้ใส่ Key หรือ ElevenLabs ขัดข้อง
         async def run_edge_fallback():
             communicate = edge_tts.Communicate(clean_text, "th-TH-PremwadeeNeural", rate="+12%", pitch="+2Hz")
             await communicate.save(output_file)
         asyncio.run(run_edge_fallback())
 
-    # 2. กลุ่มเสียง Edge-TTS (ปรับแต่งสปีดตื่นเต้น)
+    # 2. กลุ่มเสียง Edge-TTS (เร่งสปีดกระชับ)
     elif "Edge-TTS" in choice:
         voice_code = "th-TH-PremwadeeNeural" if "Premwadee" in choice else "th-TH-NiwatNeural"
         async def run_edge():
