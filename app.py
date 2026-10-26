@@ -13,17 +13,19 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
 
 import streamlit as st
 from google import genai
+from elevenlabs.client import ElevenLabs
 import edge_tts
 import yt_dlp
 from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips
 
 st.set_page_config(page_title="Auto Video Generator", page_icon="🎬", layout="centered")
-st.title("🎬 เครื่องมือสร้างคลิปอธิบายอัตโนมัติ")
-st.write("สร้างคลิปสรุปเนื้อหา ตัดฉากตรงตาม Timestamp ภาพ พร้อมเสียงพากย์ฟรี!")
+st.title("🎬 เครื่องมือสร้างคลิปเล่าเรื่องตัดฉากอัตโนมัติ")
+st.write("สรุปวิดีโอ เล่าเรื่องสนุก ตัดฉากตรงภาพ พร้อมตัวเลือกเสียงพากย์ครบทุกสไตล์!")
 
 # ดึง API Key จาก Streamlit Secrets
 raw_api_key = st.secrets.get("GEMINI_API_KEY", "")
 api_key = str(raw_api_key).strip().strip('"').strip("'")
+eleven_api_key = st.secrets.get("ELEVENLABS_API_KEY", "").strip().strip('"').strip("'")
 
 # ตัวเลือกนำเข้าวิดีโอ
 option = st.radio("เลือกวิธีนำเข้าวิดีโอ:", ["อัปโหลดไฟล์วิดีโอ (.mp4)", "วางลิงก์ TikTok"])
@@ -39,13 +41,16 @@ else:
 aspect_ratio = st.selectbox("เลือกขนาดวิดีโอ:", ["แนวตั้ง (9:16)", "แนวนอน (16:9)"])
 duration_option = st.selectbox("เลือกความยาวสคริปต์และคลิป:", ["30 วินาที", "1 นาที", "2 นาที", "3 นาที", "5 นาที"])
 
-# ตัวเลือกเสียงพากย์ฟรี
-voice_engine = st.selectbox(
-    "เลือกโมเดลเสียงพากย์ฟรี (Free Voice Model):", 
+# ศูนย์รวมตัวเลือกโมเดลเสียงพากย์ทุกรูปแบบ
+voice_selection = st.selectbox(
+    "เลือกโมเดลเสียงพากย์ (Voice Engine):", 
     [
-        "Google Voice (gTTS - สำเนียงไทยอ่านชัด แม่นยำ ฟรี 100%)",
-        "Edge Voice ผู้หญิง (Premwadee - เสียงลื่นหู ฟรี)",
-        "Edge Voice ผู้ชาย (Niwat - เสียงนุ่มลึก ฟรี)"
+        "🌟 ElevenLabs: Adam (เสียงชาย - มนุษย์จริง เนียนใส่อารมณ์)",
+        "🌟 ElevenLabs: Rachel (เสียงหญิง - มนุษย์จริง สดใสมีพลัง)",
+        "🌟 ElevenLabs: Charlie (เสียงชาย - มนุษย์จริง สายสปอยล์)",
+        "⚡ Edge-TTS: ผู้หญิงสายเล่าเรื่อง (Premwadee - สปีดเร่ง +12% สนุกกระชับ ฟรี)",
+        "⚡ Edge-TTS: ผู้ชายสายสปอยล์ (Niwat - สปีดเร่ง +12% เสียงหนักแน่น ฟรี)",
+        "🔊 Google Voice: (gTTS - ภาษาไทยมาตรฐาน อ่านชัด ฟรี 100%)"
     ]
 )
 
@@ -61,29 +66,76 @@ def download_tiktok(url, output_path="input_video.mp4"):
         ydl.download([url])
     return output_path
 
-# ฟังก์ชันจัดข้อความและเว้นวรรคเพื่อให้ AI อ่านไทยได้ถูกต้องที่สุด
+# ฟังก์ชันแปลงคำอ่านภาษาอังกฤษเป็นภาษาไทยให้ AI อ่านเป๊ะ
 def clean_text_for_tts(text):
     if not text:
-        return "นี่คือวิดีโอสรุปเนื้อหาหลักครับ"
+        return "มาดูคลิปนี้กันครับ"
+    
+    word_map = {
+        "Mr. Crab": "มิสเตอร์แครปส์",
+        "Mr.Crab": "มิสเตอร์แครปส์",
+        "Mr. Krabs": "มิสเตอร์แครปส์",
+        "SpongeBob": "สปอนจ์บอบ",
+        "Patrick": "แพทริก",
+        "TikTok": "ติ๊กต็อก",
+        "Facebook": "เฟซบุ๊ก",
+        "YouTube": "ยูทูบ"
+    }
+    
+    for k, v in word_map.items():
+        text = re.sub(re.escape(k), v, text, flags=re.IGNORECASE)
+        
     text = re.sub(r'[\*\#\_\[\]\(\)\{\}\<\>]', '', text)
     text = re.sub(r'([\.\,\!\?])', r'\1 ', text)
     text = re.sub(r'[^\w\s\u0E00-\u0E7F]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
-    return text if text else "นี่คือวิดีโอสรุปเนื้อหาหลักครับ"
+    return text if text else "มาดูคลิปนี้กันครับ"
 
-# ฟังก์ชันสร้างเสียงพากย์รองรับทั้ง gTTS และ Edge-TTS
-def generate_tts_free(text, engine_choice, output_file="voice.mp3"):
+# ฟังก์ชันจัดการสร้างเสียงพากย์ตามโมเดลที่เลือก
+def generate_voice_audio(text, choice, output_file="voice.mp3"):
     clean_text = clean_text_for_tts(text)
-    
-    if "Google Voice" in engine_choice:
-        tts = gTTS(text=clean_text, lang='th', slow=False)
-        tts.save(output_file)
-    else:
-        voice_code = "th-TH-PremwadeeNeural" if "Premwadee" in engine_choice else "th-TH-NiwatNeural"
+
+    # 1. กลุ่มเสียง ElevenLabs
+    if "ElevenLabs" in choice:
+        if eleven_api_key:
+            voice_id = "pNInz6obpgDQGcFmaJgB" # Adam Default
+            if "Rachel" in choice:
+                voice_id = "21m00Tcm4TlvDq8ikWAM"
+            elif "Charlie" in choice:
+                voice_id = "IKne3meq5aSn9XLyUdCD"
+
+            try:
+                client = ElevenLabs(api_key=eleven_api_key)
+                audio = client.generate(
+                    text=clean_text,
+                    voice=voice_id,
+                    model="eleven_multilingual_v2"
+                )
+                with open(output_file, "wb") as f:
+                    for chunk in audio:
+                        f.write(chunk)
+                return
+            except Exception:
+                pass # หากมีข้อผิดพลาด ให้สลับไปใช้ Edge-TTS สำรองให้อัตโนมัติ
+
+        # สำรองกรณีไม่ได้ใส่ ElevenLabs Key
+        async def run_edge_fallback():
+            communicate = edge_tts.Communicate(clean_text, "th-TH-PremwadeeNeural", rate="+12%", pitch="+2Hz")
+            await communicate.save(output_file)
+        asyncio.run(run_edge_fallback())
+
+    # 2. กลุ่มเสียง Edge-TTS (ปรับแต่งสปีดตื่นเต้น)
+    elif "Edge-TTS" in choice:
+        voice_code = "th-TH-PremwadeeNeural" if "Premwadee" in choice else "th-TH-NiwatNeural"
         async def run_edge():
-            communicate = edge_tts.Communicate(clean_text, voice_code)
+            communicate = edge_tts.Communicate(clean_text, voice_code, rate="+12%", pitch="+2Hz")
             await communicate.save(output_file)
         asyncio.run(run_edge())
+
+    # 3. กลุ่มเสียง gTTS (Google Voice ฟรี 100%)
+    else:
+        tts = gTTS(text=clean_text, lang='th', slow=False)
+        tts.save(output_file)
 
 if st.button("🚀 เริ่มสร้างวิดีโอ"):
     if not api_key:
@@ -106,46 +158,45 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 status.info("📥 กำลังดาวน์โหลดวิดีโอ TikTok...")
                 download_tiktok(video_url, video_file)
             
-            # 2. ตั้งค่าเวลาและสร้างสคริปต์แยกตาม Timestamp
+            # 2. ตั้งค่าเวลาและสร้างสคริปต์
             duration_word_map = {
-                "30 วินาที": ("30 วินาที", 65),
-                "1 นาที": ("1 นาที", 130),
-                "2 นาที": ("2 นาที", 260),
-                "3 นาที": ("3 นาที", 390),
-                "5 นาที": ("5 นาที", 650),
+                "30 วินาที": ("30 วินาที", 75),
+                "1 นาที": ("1 นาที", 150),
+                "2 นาที": ("2 นาที", 300),
+                "3 นาที": ("3 นาที", 450),
+                "5 นาที": ("5 นาที", 750),
             }
-            time_label, target_words = duration_word_map.get(duration_option, ("30 วินาที", 65))
+            time_label, target_words = duration_word_map.get(duration_option, ("30 วินาที", 75))
 
             status.info(f"🤖 Gemini กำลังวิเคราะห์ Timestamp ภาพและสร้างสคริปต์พากย์ ({time_label})...")
             client = genai.Client(api_key=api_key)
             g_file = client.files.upload(file=video_file)
             
             prompt = f"""
-            ช่วยวิเคราะห์วิดีโอนี้ แบ่งวิดีโอออกเป็นฉากๆ ตามช่วงเวลาจริง (Timestamp ในรูปแบบวินาที) และเขียนสคริปต์พากย์ภาษาไทยให้ตรงกับภาพของแต่ละฉาก
-            ความยาวรวมประมาณ {time_label} (ประมาณ {target_words} คำ)
+            สวมบทบาทเป็น "ครีเอเตอร์สายเล่าเรื่องสุดปั่น" ที่กำลังเล่าคลิปนี้ให้เพื่อนฟังแบบตื่นเต้นและใส่อารมณ์สุดๆ!
+            แบ่งเนื้อหาออกเป็นฉากตาม Timestamp จริงในวิดีโอ ความยาวรวมประมาณ {time_label} (ประมาณ {target_words} คำ)
 
             ตอบกลับในรูปแบบ JSON Array เท่านั้น ห้ามมีข้อความอื่นนอกเหนือจาก JSON เช่น:
             [
-              {{"start_sec": 0, "end_sec": 5, "text": "เปิดเรื่องมาจะเห็นว่า..."}},
-              {{"start_sec": 6, "end_sec": 12, "text": "จากนั้นฉากนี้เกิดอะไรขึ้น..."}}
+              {{"start_sec": 0, "end_sec": 5, "text": "เฮ้ยทุกคน ดูช็อตนี้! เปิดมาก็เอาเลยว่ะ..."}},
+              {{"start_sec": 6, "end_sec": 12, "text": "จังหวะนี้แหละ อย่างพีค..."}}
             ]
 
-            กฎเหล็กสำหรับฟิลด์ "text":
-            1. สคริปต์พากย์ต้องตรงกับภาพที่เกิดในช่วง start_sec ถึง end_sec นั้นๆ
-            2. เขียนด้วยภาษาพูดไทยที่สะกดตรงตัว อ่านง่าย ไม่ใช้คำทับศัพท์อังกฤษ (เช่น TikTok -> ติ๊กต็อก)
-            3. เว้นวรรคประโยคให้ชัดเจน ห้ามมีอักขระพิเศษ (*, #) หรือวงเล็บ
+            กฎเหล็กการแต่งบทพากย์ ("text"):
+            1. ใช้น้ำเสียงแบบเพื่อนเล่าเรื่องให้เพื่อนฟัง มีคำอุทานสร้างอารมณ์ เช่น "เฮ้ย!", "ว้าว!", "ดูสิ!", "จังหวะนี้คือ!"
+            2. เขียนชื่อตัวละครเป็นคำอ่านไทยตรงตัว เช่น Mr. Krabs -> มิสเตอร์แครปส์, SpongeBob -> สปอนจ์บอบ
+            3. สคริปต์ต้องตรงกับภาพที่เกิดขึ้นในช่วง start_sec ถึง end_sec นั้นๆ
+            4. ห้ามมีอักขระพิเศษ (*, #) หรือสัญลักษณ์แปลกๆ
             """
             
-            # อัปเดตใช้เฉพาะโมเดลหลักมาตรฐาน gemini-3.8-flash
-            candidate_models = ['gemini-3.8-flash']
+            max_retries = 3
             response = None
-            quota_exceeded = False
             last_error = None
             
-            for model_name in candidate_models:
+            for attempt in range(max_retries):
                 try:
                     response = client.models.generate_content(
-                        model=model_name,
+                        model='gemini-3.8-flash',
                         contents=[g_file, prompt]
                     )
                     if response and getattr(response, 'text', None):
@@ -153,24 +204,20 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 except Exception as api_err:
                     last_error = api_err
                     err_msg = str(api_err)
-                    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-                        quota_exceeded = True
-                        status.warning(f"⏳ โมเดล {model_name} โควตาประจำวันเต็ม...")
-                        time.sleep(2)
+                    if "503" in err_msg or "UNAVAILABLE" in err_msg:
+                        wait_time = (attempt + 1) * 3
+                        status.warning(f"⏳ เซิร์ฟเวอร์ยุ่ง กำลังลองใหม่อัตโนมัติใน {wait_time} วินาที...")
+                        time.sleep(wait_time)
                         continue
-                    elif "404" in err_msg or "NOT_FOUND" in err_msg:
-                        continue
-                    elif "503" in err_msg or "UNAVAILABLE" in err_msg:
-                        time.sleep(3)
-                        continue
+                    elif "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                        raise Exception("โควตาฟรีประจำวันของ Gemini API Key นี้หมดแล้ว กรุณาเปลี่ยน API Key ใหม่ใน Streamlit Secrets ครับ")
                     else:
-                        continue
+                        if attempt == max_retries - 1:
+                            raise api_err
+                        time.sleep(2)
 
             if not response or not getattr(response, 'text', None):
-                if quota_exceeded:
-                    raise Exception("โควตาฟรีประจำวันของ Gemini API Key นี้หมดแล้ว (จำกัด 20 คำขอ/วัน) กรุณาสร้าง API Key ใหม่ใน Google AI Studio แล้วอัปเดตใน Streamlit Secrets ครับ")
-                else:
-                    raise Exception(f"ไม่สามารถเชื่อมต่อ Gemini API ได้: {str(last_error)}")
+                raise Exception(f"ไม่สามารถเชื่อมต่อ Gemini API ได้: {str(last_error)}")
 
             raw_response_text = response.text.strip()
             clean_json_str = re.sub(r'```json\s*|\s*```', '', raw_response_text).strip()
@@ -181,14 +228,14 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
             except Exception:
                 scenes = [{"start_sec": 0, "end_sec": 30, "text": raw_response_text}]
 
-            st.subheader("📝 สคริปต์และการตัดฉากที่ Gemini วิเคราะห์ได้:")
+            st.subheader("📝 สคริปต์เล่าเรื่องแบบใส่อารมณ์:")
             full_script_display = ""
             for i, sc in enumerate(scenes, 1):
                 full_script_display += f"**ฉากที่ {i} [{sc.get('start_sec', 0)}s - {sc.get('end_sec', 0)}s]:** {sc.get('text', '')}\n\n"
             st.markdown(full_script_display)
 
-            # 3. ตัดคลิปตาม Timestamp และสร้างเสียงพากย์ฉากต่อฉาก
-            status.info("🎞️ กำลังตัดวิดีโอตาม Timestamp และรวมเสียงพากย์แต่ละฉาก...")
+            # 3. เจนเสียงพากย์และตัดคลิปตาม Timestamp
+            status.info("🎙️ กำลังลงเสียงพากย์ตามโมเดลที่เลือกและรวมฉาก...")
             main_clip = VideoFileClip(video_file)
             scene_clips = []
 
@@ -204,7 +251,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 end_t = max(start_t + 0.5, min(end_t, main_clip.duration))
 
                 audio_file = f"voice_scene_{idx}.mp3"
-                generate_tts_free(text, voice_engine, audio_file)
+                generate_voice_audio(text, voice_selection, audio_file)
                 sc_audio = AudioFileClip(audio_file)
 
                 sc_video = main_clip.subclip(start_t, end_t)
@@ -236,7 +283,7 @@ if st.button("🚀 เริ่มสร้างวิดีโอ"):
                 st.download_button(
                     label="⬇️ ดาวน์โหลดวิดีโอ (.mp4)",
                     data=file,
-                    file_name="summarized_synced_video.mp4",
+                    file_name="narrated_story_video.mp4",
                     mime="video/mp4"
                 )
 
